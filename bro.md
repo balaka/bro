@@ -1,5 +1,6 @@
 ---
-description: Session continuity memory. Capture current conversation state — operator preferences, shortcut vocabulary, live threads, decisions, design/code/investigation context — so it survives /compact resets. Run after significant exchanges, when the user says "remember this" or "bro, remember", or before a /compact. Argument `setup` reconfigures storage location.
+version: 1.1.0
+description: Session continuity memory. Capture current conversation state — operator preferences, shortcut vocabulary, live threads, decisions, design/code/investigation context — so it survives /compact resets. Run after significant exchanges, when the user says "remember this" or "bro, remember", or before a /compact. Arguments — `setup`: reconfigure storage; `list`: show today's threads; `update`: self-update from GitHub; `<tag>` or `tag=<tag>`: write to specific thread folder.
 ---
 
 # bro — session continuity memory
@@ -16,7 +17,7 @@ Check if this skill lives at the canonical path:
 test -f ~/.claude/commands/bro.md && echo canonical || echo other
 ```
 
-**If file IS at canonical path** → proceed to Step 1.
+**If file IS at canonical path** → proceed to Step 0a.
 
 **If file is NOT at canonical path** (copied somewhere else, or running inline):
 
@@ -36,10 +37,41 @@ If user declines → continue from current location (still works, just not as a 
 
 ---
 
+## Step 0a — version check (weekly, non-blocking)
+
+Read `~/.claude/bro-config.json`. Check the `lastVersionCheck` field (ISO timestamp).
+
+**If `lastVersionCheck` is missing or older than 7 days ago:**
+
+1. Fetch the latest version number from GitHub:
+   ```bash
+   REMOTE_VERSION=$(curl -sfL --max-time 5 \
+     https://raw.githubusercontent.com/balaka/bro/main/bro.md \
+     | head -5 | grep "^version:" | awk '{print $2}')
+   ```
+2. Read the installed version from the local `bro.md` frontmatter the same way (local path: `~/.claude/commands/bro.md`).
+3. Compare:
+   - **Different versions** → tell the user:
+     > bro v{REMOTE} available (you have v{LOCAL}). Update? I can fetch it now — just say yes.
+     
+     If user confirms → run update flow (Section C).
+     If user declines → proceed; re-check in 7 days.
+   - **Same version** → silent, no interruption.
+4. Regardless of outcome, write the current ISO timestamp to `lastVersionCheck` in config so we don't re-check for another 7 days.
+
+**Network failure or curl error** → silent, skip check, don't block. Try again next time.
+
+**Skip version check entirely** if env var `BRO_NO_UPDATE_CHECK=1` is set.
+
+---
+
 ## Step 1 — argument routing
 
-- Invoked with argument `setup` or `config` → go to **Section A**.
-- Otherwise → go to **Section B**.
+- Invoked with argument `setup` or `config` → go to **Section A** (configure storage).
+- Invoked with argument `list` → go to **Section D** (list today's threads).
+- Invoked with argument `update` → go to **Section C** (self-update).
+- Invoked with argument in form `tag=<name>` or bare `<name>` (non-keyword) → go to **Section B** using `<name>` as tag.
+- No argument → go to **Section B** with tag resolution per priority order.
 
 ---
 
@@ -92,9 +124,37 @@ Based on answer:
 
 Resolve to absolute path. Create directory. Save config. Continue to Step 2.
 
-### Step 2 — determine today's file
+### Step 2 — resolve thread tag and determine today's file
 
-Use today's date in `YYYY-MM-DD` format. Path: `{storageDir}/{YYYY-MM-DD}.md`.
+**Thread structure:** bro uses a **folder-per-thread** layout so parallel work streams don't collide in one file:
+
+```
+{storageDir}/
+├── {thread-tag-1}/
+│   ├── 2026-04-20.md
+│   └── 2026-04-21.md
+├── {thread-tag-2}/
+│   └── 2026-04-20.md
+└── default/
+    └── 2026-04-20.md          ← if no tag provided
+```
+
+**Tag resolution priority (highest wins):**
+
+1. **Explicit argument** — if user invoked `/bro <tag>` or `/bro tag=<tag>` → use `<tag>`.
+2. **Env var** — if `BRO_TAG` is set in environment → use its value.
+3. **Recent-file heuristic** — scan `{storageDir}/*/` for files modified in the last 2 hours. If exactly one match → use that thread-tag (continuation). If multiple → ask user to pick.
+4. **Interactive** — if existing threads exist for today (`{storageDir}/*/2026-04-20.md`), show the list and ask: "Continue one of these threads or create new? (1, 2, ... or type a new tag name)".
+5. **Fallback** — if no existing threads or user skipped → tag = `default`.
+
+**Tag normalization:** lowercase, spaces → dashes, strip special chars. E.g. `"Bro Plugin Work"` → `bro-plugin-work`.
+
+**Compute file path:**
+```
+{storageDir}/{resolved-tag}/{YYYY-MM-DD}.md
+```
+
+Create the tag folder if it doesn't exist: `mkdir -p {storageDir}/{tag}/`.
 
 ### Step 3 — create or update
 
@@ -134,8 +194,65 @@ Use today's date in `YYYY-MM-DD` format. Path: `{storageDir}/{YYYY-MM-DD}.md`.
 ### Step 5 — report
 
 - File path (created or updated)
+- Thread tag used
 - Sections changed or added
 - If nothing new worth writing → say so, skip the write
+
+---
+
+## Section C — self-update flow
+
+Invoked via `/bro update` or accepted from Step 0a prompt.
+
+1. Download latest `bro.md` from GitHub:
+   ```bash
+   curl -sfL --max-time 10 \
+     -o ~/.claude/commands/bro.md.new \
+     https://raw.githubusercontent.com/balaka/bro/main/bro.md
+   ```
+2. Verify fetched file is non-empty and contains a `version:` line. If invalid → abort, delete `.new` file, report error.
+3. Extract new version:
+   ```bash
+   NEW_VERSION=$(head -5 ~/.claude/commands/bro.md.new | grep "^version:" | awk '{print $2}')
+   ```
+4. Atomic swap:
+   ```bash
+   mv ~/.claude/commands/bro.md.new ~/.claude/commands/bro.md
+   ```
+5. Update config `~/.claude/bro-config.json`:
+   - Set `installedVersion` to new version
+   - Set `lastVersionCheck` to current ISO timestamp
+6. Report:
+   > Updated to v{NEW_VERSION}. Restart Claude Desktop (or start a new chat) to load the new version.
+
+**If curl fails or version check fails** → report clearly: "Update failed: {reason}. You're still on v{current}. Try again later or update manually: `curl -o ~/.claude/commands/bro.md https://raw.githubusercontent.com/balaka/bro/main/bro.md`"
+
+---
+
+## Section D — list today's threads
+
+Invoked via `/bro list`.
+
+1. Resolve storage directory from config (same as Section B Step 1).
+2. Find all today's thread files:
+   ```bash
+   find {storageDir} -maxdepth 2 -name "{YYYY-MM-DD}.md" -type f
+   ```
+3. For each file, extract the tag (parent folder name) and last-modified time.
+4. Display:
+
+```
+Today's bro threads in {storageDir}:
+
+  📝 bro-plugin     updated 12m ago   (3 sections)
+  📝 xovi-scoring   updated 2h ago    (5 sections)
+  📝 default        updated 5h ago    (1 section)
+
+Total: 3 threads.
+Run /bro <tag> to continue a specific thread, or /bro to pick interactively.
+```
+
+5. If no threads today → say "No bro threads created today yet. Run `/bro` to start."
 
 ---
 

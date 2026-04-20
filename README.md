@@ -163,9 +163,42 @@ cd ~/Projects/bro && git pull
 
 | Command | What it does |
 |---|---|
-| `/bro` | Update today's memory file with current conversation state |
+| `/bro` | Update today's memory file for the current thread (auto-detects or asks) |
+| `/bro <tag>` | Update/create memory file for a named thread — e.g. `/bro api-refactor` |
+| `/bro list` | Show today's threads and when each was last updated |
 | `/bro setup` | Change storage location |
-| `bro, recall today` (natural language) | After `/compact` — reads today's file back into context |
+| `/bro update` | Pull the latest bro version from GitHub |
+| `bro, recall today` (natural language) | After `/compact` — reads the relevant thread file back into context |
+
+bro also checks for updates automatically once per week and offers to pull new versions — silent if you're already current, non-blocking if GitHub is unreachable. Disable with `BRO_NO_UPDATE_CHECK=1` in your environment.
+
+---
+
+## Thread folders — one folder per work stream
+
+bro uses a **folder-per-thread** layout. Parallel work streams don't collide:
+
+```
+.claude/bro/
+├── api-refactor/
+│   ├── 2026-04-18.md
+│   ├── 2026-04-19.md
+│   └── 2026-04-20.md         ← today's memory for this thread
+├── design-system/
+│   └── 2026-04-20.md         ← separate today's memory for design work
+└── default/
+    └── 2026-04-20.md         ← if you didn't specify a tag
+```
+
+Why: a single day often spans multiple contexts — you debug an API bug in the morning, design tokens in the afternoon. Mixing both in one file turns post-`/compact` reads into a mess. Folders keep each thread clean and let you read the full history of a single topic by listing the folder.
+
+**Thread tag resolution** (in priority order):
+
+1. Explicit — `/bro design-system` or `/bro tag=design-system`
+2. Env var — `export BRO_TAG=design-system` in your shell / direnv
+3. Recent activity — if exactly one thread was updated in the last 2 hours, bro continues it
+4. Interactive — bro shows existing threads and asks which to continue
+5. Fallback — `default` folder
 
 ---
 
@@ -186,10 +219,10 @@ Pick once — remembered afterwards. Change anytime with `/bro setup`.
 
 ## After /compact
 
-Just tell the chat: **"bro, recall today"** — Claude finds and reads the file. Or read it manually:
+Just tell the chat: **"bro, recall today"** — Claude lists today's threads and reads the right one. Or explicitly:
 
 ```
-Read ~/.claude/bro/2026-04-20.md
+Read ~/.claude/bro/<thread>/2026-04-20.md
 ```
 
 Working context re-hydrated. Continue where you stopped.
@@ -224,7 +257,9 @@ When you run `/bro`, Claude reads the skill file and executes the instructions �
 
 ---
 
-## Storage locations
+## Storage root
+
+The folder that contains all your thread folders. Pick once on first run:
 
 | Option | Path | When to use |
 |---|---|---|
@@ -232,7 +267,25 @@ When you run `/bro`, Claude reads the skill file and executes the instructions �
 | Global | `~/.claude/bro/` | One place for all work |
 | Custom | Any path you choose | You know what you want |
 
-Change anytime with `/bro setup`.
+Thread folders live inside this root (`<root>/<thread>/<date>.md`). Change root anytime with `/bro setup` — existing files don't move automatically.
+
+---
+
+## Auto-update
+
+bro checks GitHub for a new version once per week. If a new version exists, it tells you and offers to pull — non-blocking if you're offline or busy.
+
+- Manual update: `/bro update`
+- Disable weekly check: `export BRO_NO_UPDATE_CHECK=1` in your shell
+
+After updating, restart Claude Desktop (or open a new chat) to load the new skill version.
+
+---
+
+## Changelog
+
+- **v1.1.0** — folder-per-thread layout (parallel work streams no longer collide); `/bro list`, `/bro <tag>`, `/bro update`; weekly version check
+- **v1.0.0** — initial release
 
 ---
 
