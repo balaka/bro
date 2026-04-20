@@ -1,6 +1,21 @@
 # bro — your chat holds the thread
 
-Lightweight session continuity for Claude Desktop. Captures conversation state so your context survives `/compact` resets.
+[![Version](https://img.shields.io/badge/version-1.1.0-blue)](https://github.com/balaka/bro)
+[![GitHub stars](https://img.shields.io/github/stars/balaka/bro?style=social)](https://github.com/balaka/bro/stargazers)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Claude Desktop](https://img.shields.io/badge/Claude-Desktop-D97757)](https://claude.ai/download)
+
+**Session continuity memory for Claude Desktop.** Remembers your preferences, vocabulary, decisions, rejected options, design tokens, debugging hypotheses, and rules you taught Claude — so context survives `/compact` resets. One file per thread per day.
+
+## Install (30 seconds)
+
+```bash
+mkdir -p ~/.claude/commands && \
+  curl -o ~/.claude/commands/bro.md \
+  https://raw.githubusercontent.com/balaka/bro/main/bro.md
+```
+
+Restart Claude Desktop → type `/bro` in any chat. Done.
 
 ---
 
