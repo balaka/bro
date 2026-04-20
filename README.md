@@ -299,8 +299,17 @@ After updating, restart Claude Desktop (or open a new chat) to load the new skil
 
 ## Changelog
 
-- **v1.1.0** — folder-per-thread layout (parallel work streams no longer collide); `/bro list`, `/bro <tag>`, `/bro update`; weekly version check
+- **v1.1.0** — folder-per-thread layout (parallel work streams no longer collide); `/bro list`, `/bro <tag>`, `/bro update`; weekly version check. Added `SKILL.md` mirror of `bro.md` with enriched frontmatter for external directory indexers.
 - **v1.0.0** — initial release
+
+## Files in this repo
+
+- **`bro.md`** — canonical skill file, install target (curl one-liner points here)
+- **`SKILL.md`** — mirror of `bro.md` with full frontmatter (name, tags, author, repository) for external directory indexers (skillsdirectory.com, oneskill.dev, etc.) that expect the standard `SKILL.md` filename convention
+- **`README.md`** — this file
+- **`LICENSE`** — MIT
+
+When updating the skill, keep `bro.md` and `SKILL.md` in sync (they should have identical body content; `SKILL.md` has extra frontmatter fields).
 
 ---
 
