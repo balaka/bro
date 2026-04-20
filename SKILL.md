@@ -1,17 +1,5 @@
 ---
-name: bro
-version: 1.1.0
-description: Session continuity memory for Claude Desktop. Captures operator preferences, shortcut vocabulary, live threads, decisions, design/code/investigation context, and working-discipline rules in a daily markdown file per work thread — so context survives /compact resets. Run after significant exchanges, when the user says "remember this" or "bro, remember", or before /compact. Arguments — setup: reconfigure storage; list: show today's threads; update: self-update from GitHub; <tag>: write to specific thread folder.
-tags:
-  - memory
-  - continuity
-  - productivity
-  - claude-desktop
-  - context
-  - session
-author: Yuriy Balaka
-license: MIT
-repository: https://github.com/balaka/bro
+description: Session continuity memory for Claude Desktop. Captures operator preferences, shortcut vocabulary, live threads, decisions, and design/code/investigation context in a daily markdown file per work thread — so context survives /compact resets.
 ---
 
 # bro — session continuity memory
