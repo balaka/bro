@@ -1,11 +1,11 @@
 # bro — your chat holds the thread
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/balaka/bro)
+[![Version](https://img.shields.io/badge/version-2.1.0-blue)](https://github.com/balaka/bro)
 [![GitHub stars](https://img.shields.io/github/stars/balaka/bro?style=social)](https://github.com/balaka/bro/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Claude Desktop](https://img.shields.io/badge/Claude-Desktop-D97757)](https://claude.ai/download)
 
-**Session continuity memory for Claude Desktop / Claude Code.** Captures what `/compact` wipes — your preferences, vocabulary, decisions, rejected options, design tokens, debugging hypotheses, and rules you taught Claude. Stores **per-repo** in a three-tier layout that separates persistent context (project descriptor, sticky rules, architecture, vocabulary) from ephemeral daily state. Parallel chats in the same folder don't collide — each gets its own thread automatically.
+**Session continuity memory for Claude Desktop / Claude Code.** Captures what `/compact` wipes — your preferences, vocabulary, decisions, rejected options, design tokens, debugging hypotheses, and rules you taught Claude. Stores **per-repo** in a three-tier layout that separates persistent context (project descriptor, sticky rules, architecture, vocabulary) from ephemeral daily state. Tag derives from chat title (manual rename → AI-generated → first message), with UUID postfix for guaranteed collision safety. `/bro migrate` performs LLM-driven full conversion of legacy logs without data loss.
 
 ## Install (30 seconds)
 
@@ -65,13 +65,48 @@ Only sections with material are written. Empty sections don't clutter the file.
 {cwd}/bro/                                  ← visible in repo root (or .claude/bro/ if hidden)
 ├── .gitignore                              ← ignores own contents by default
 ├── _principles.md                          ← REPO-WIDE persistent (universal context)
-└── {thread-tag}/
-    ├── .session.json                       ← session marker for collision safety
+└── {tag-with-postfix}/
+    ├── .session.json                       ← session marker — uuid, title history, rename tracking
     ├── _thread.md                          ← THREAD-WIDE persistent (this work topic)
     └── 2026-04-29.md                       ← DAILY ephemeral
 ```
 
 **Why three tiers?** Daily files used to bloat with persistent content copy-pasted day after day. v2 splits that out — `_principles.md` is written once for the repo (project descriptor, git rules), `_thread.md` per work topic (architecture, vocabulary, roadmap), and daily files contain only what changed. After `/compact`, Claude reads in order: principles → thread → today.
+
+---
+
+## How tag is derived (v2.1)
+
+bro reads your chat session's metadata and resolves the tag with priority:
+
+1. **`customTitle`** — if you renamed the chat manually in the UI sidebar
+2. **`aiTitle`** — Claude's auto-generated chat summary (visible in sidebar)
+3. **First user message** — fallback when titles aren't computed yet
+4. **`chat-{HHMM}`** — last resort
+
+Then slugify with stop-word filter (drops `the`, `a`, `давай`, `сделаем`, prepositions, etc.) and append a 6-hex postfix from the session UUID:
+
+```
+"Bro Migration Fix"
+  ↓ filter + slugify
+"bro-migration-fix"
+  ↓ append postfix
+"bro-migration-fix-9e0988"          ← session UUID = 9e09887a-c861-...
+```
+
+**Why UUID postfix?** Two parallel chats started in the same minute would collide if postfix were time-based. UUIDs are unique per chat (one in 16 million collision probability for the 6-char prefix) → guaranteed isolation. UUID is itself a function of time + entropy, just not the literal time.
+
+**Rename detection.** When you rename a chat mid-conversation, the next `/bro` notices and offers to rename the tag folder:
+
+```
+Title changed:
+  was: ai: "Fix plugin log storage and multiple chat handling"
+  now: custom: "Bro Migration Fix"
+
+Rename tag folder?
+  1. Yes — move fix-plugin-log-storage-9e0988 → bro-migration-fix-9e0988 (default)
+  2. No — keep current tag
+```
 
 ---
 
@@ -106,6 +141,8 @@ The killer feature for technical work. bro remembers **rules you taught Claude**
 
 1. Never --amend (always new commits)
 2. Push to main requires explicit operator authorization
+3. Не останавливать оператора по соображениям токенов или лимитов
+   — у нас нет лимитов, на полную глубину работаем
 
 ## Working discipline  (in _thread.md, topic-specific)
 
@@ -118,7 +155,7 @@ The killer feature for technical work. bro remembers **rules you taught Claude**
 - Cross-reference with governing canon
 ```
 
-**Without bro**, after `/compact`: Claude loses all discipline. Charges into edits without checking specs. Ports components shallow. You re-teach the same rules.
+**Without bro**, after `/compact`: Claude loses all discipline. Charges into edits without checking specs. Asks about token budgets. You re-teach the same rules.
 
 **With bro**: Discipline persists. Rules carry across sessions with `(carried since YYYY-MM-DD)` markers showing they're still current.
 
@@ -126,22 +163,20 @@ The killer feature for technical work. bro remembers **rules you taught Claude**
 
 ### Example 3 — Parallel chats in one repo
 
-You have two chats open in the same folder — one debugging auth, one redesigning onboarding. Without isolation, they'd write to the same thread file and overwrite each other.
-
-bro derives a tag from each chat's first user message and disambiguates with session UUID:
+Two chats open in the same folder, both about auth bugs. bro derives unique tags from session UUIDs:
 
 ```
 {cwd}/bro/
 ├── _principles.md
-├── fix-the-auth-bug/
-│   ├── .session.json   (sessionUuid: 9e09887...)
+├── fix-auth-bug-9e0988/
+│   ├── .session.json   (sessionUuid: 9e0988...)
 │   └── 2026-04-29.md
-└── redesign-onboarding/
-    ├── .session.json   (sessionUuid: a3f1c0b...)
+└── fix-auth-bug-a3f1c0/
+    ├── .session.json   (sessionUuid: a3f1c0...)
     └── 2026-04-29.md
 ```
 
-If both chats start with the same first message, the second gets a UUID-suffix tag (`fix-the-auth-bug-a3f1c0`) — collision-safe.
+Same chat title → different UUID postfixes → no collision. Even started in the same minute.
 
 ---
 
@@ -159,6 +194,29 @@ You're discussing architecture. Claude offers to promote a sticky decision:
 ```
 
 Interactive — you decide. Discipline against cementing one-off remarks as repo-wide laws.
+
+---
+
+## Migration from older versions
+
+If you've been using bro v1.x or v2.0 and have logs scattered in old locations, `/bro migrate` performs **LLM-driven semantic conversion** to the v2.1 three-tier format:
+
+1. **Backup** — full tar archive of legacy storage
+2. **Capture current chat first** — write today's daily in new format before touching legacy (preserves working context if migration crashes)
+3. **Discover** — scan `~/Desktop/bro-workspace/`, `~/.claude/bro/`, current repo's `bro/`, and other `bro/` folders on disk
+4. **Per-tag conversion** — for each legacy tag:
+   - Read all daily files
+   - LLM classifies every section as persistent (universal → `_principles.md`, topic → `_thread.md`) or ephemeral (stays in daily)
+   - Cross-file dedupe (same architecture decision in 5 files → one entry in `_thread.md` with `(carried since YYYY-MM-DD)`)
+   - Rewrite daily files in v2.1 format with persistent stripped (refs added)
+   - Move originals to `{tag}/_legacy-pre-v2.1/` (never deleted)
+   - Apply UUID postfix to legacy tag name
+5. **Aggregate** — universal rules deduplicated across tags into one `_principles.md`
+6. **Verify** — counts before/after, spot-check report
+
+LLM-driven (not regex) because old logs come in many formats — v1 single-file, v2.0 partial, mixed bro/nerve, inconsistent markers. Semantic understanding wins over pattern matching.
+
+After migration, review the generated `_principles.md` and `_thread.md` files. If something looks wrong, restore from the backup tar archive (path printed at end). If correct, run `/bro clean-legacy` later to delete the `_legacy-pre-v2.1/` folders (manual command — never automatic).
 
 ---
 
@@ -193,28 +251,16 @@ cd ~/Projects/bro && git pull
 
 | Command | What it does |
 |---|---|
-| `/bro` | Update memory for the current chat (auto-resolves tag from chat's first message) |
-| `/bro <tag>` | Use explicit tag — e.g. `/bro api-refactor` |
-| `/bro list` | Show today's threads + persistent files in this repo |
-| `/bro setup` | Configure storage location for this repo |
+| `/bro` | Update memory for the current chat (auto-resolves tag from chat title) |
+| `/bro <tag>` | Use explicit tag — e.g. `/bro api-refactor` (postfix still applied) |
+| `/bro list` | Show today's threads + persistent files in this repo with title history |
+| `/bro setup` | Configure storage location for this repo (visible vs hidden) |
+| `/bro migrate` | LLM-driven conversion of legacy logs into v2.1 three-tier format |
+| `/bro clean-legacy` | Delete `_legacy-pre-v2.1/` folders after manual review (irreversible) |
 | `/bro update` | Pull the latest bro version from GitHub |
 | `bro, recall today` (natural language) | After `/compact` — reads back the relevant files |
 
 bro also checks for updates automatically once per week and offers to pull new versions — silent if you're already current, non-blocking if GitHub is unreachable. Disable with `BRO_NO_UPDATE_CHECK=1` in your environment.
-
----
-
-## Tag auto-resolution
-
-When you run `/bro` without an argument, the tag is derived from your chat:
-
-1. **Same chat continuing** — session marker remembers the tag from a prior `/bro` in this chat. Reused as-is.
-2. **New chat, no explicit tag** — bro reads the first user message in this chat from Claude Code's session log, slugifies the first 5 words (preserving Cyrillic), and uses that as the tag.
-3. **Collision check** — if the tag folder already exists with a different session UUID, the new chat gets a UUID suffix (`fix-auth-bug-a3f1c0`).
-4. **Explicit override** — `/bro <tag>` always wins.
-5. **Fallback** — if first message can't be extracted, defaults to `chat-{HHMM}`.
-
-Tags are stable for a chat's lifetime via `~/.claude/bro-sessions/{uuid}.tag` mapping.
 
 ---
 
@@ -236,6 +282,8 @@ Default is **(1) visible**, so you can read, search, and analyze your logs along
 
 A `.gitignore` is added to the chosen folder that ignores all contents by default. If you want to commit `_principles.md` or `_thread.md` files (e.g., to share repo-wide context with the team), uncomment the relevant lines in that gitignore.
 
+If legacy logs are detected (from v1 or v2.0), bro suggests `/bro migrate` to convert them.
+
 Change location anytime with `/bro setup`.
 
 ---
@@ -245,7 +293,7 @@ Change location anytime with `/bro setup`.
 Just tell the chat: **"bro, recall today"** — Claude lists today's threads and reads them in tier order. Or explicitly:
 
 ```
-Read bro/_principles.md, bro/<tag>/_thread.md, bro/<tag>/2026-04-29.md
+Read bro/_principles.md, bro/<tag-with-postfix>/_thread.md, bro/<tag-with-postfix>/2026-04-29.md
 ```
 
 Working context re-hydrated. Continue where you stopped.
@@ -259,13 +307,16 @@ bro uses a vocabulary of parenthetical markers consistently across files:
 | Marker | Where | Meaning |
 |---|---|---|
 | `(sticky)` | persistent decisions | Append-only; supersede with note, don't rewrite |
-| `(carried since YYYY-MM-DD)` | rules / vocabulary | Inherited from prior session, still valid |
+| `(carried since YYYY-MM-DD)` | rules / vocabulary | Inherited from prior session, still valid; date = first appearance |
 | `(reinforced YYYY-MM-DD)` | rules | Repeated for emphasis |
 | `(new YYYY-MM-DD)` | new items | Added today |
+| `(refined YYYY-MM-DD)` | vocabulary terms | Definition updated; latest definition wins |
+| `(consolidated YYYY-MM-DD from N source files)` | top of `_thread.md` | Migration audit trail |
 | `(чтобы не возвращались)` | REJECTED items | Hard do-not-revisit |
 | `(WAIT: <reason>)` | OPEN items | Blocked on external condition |
 | `(parking-lot)` / `(deferred)` / `(YAGNI)` | items | Postponed |
 | `(supersedes prior, dated YYYY-MM-DD)` | sticky decisions | Pivot replaces earlier decision |
+| `(renamed from {old-tag} since YYYY-MM-DD)` | top of daily | Tag was renamed when chat title changed |
 
 ---
 
@@ -300,13 +351,20 @@ Claude Desktop / Claude Code auto-discovers markdown files in `~/.claude/command
 
 `bro.md` contains:
 - YAML frontmatter (description — so Claude knows what the skill does)
-- Logic (how to detect/setup storage, resolve tags, classify material, write files)
-- Templates (structure of `_principles.md`, `_thread.md`, daily file)
+- Logic (how to detect/setup storage, resolve tags from chat title, classify material, write files, migrate legacy)
+- Templates (structure of `_principles.md`, `_thread.md`, daily file, `.session.json`)
 - Markers vocabulary
 - Bilingual rules
-- Explanation (why three-tier protocol exists)
+- Explanation (why three-tier, why UUID postfix, why LLM-driven migration)
 
-When you run `/bro`, Claude reads the skill file and executes the instructions — detecting where to save in this repo, resolving tag from session, loading existing files, classifying recent conversation into persistent vs ephemeral, writing what's new.
+When you run `/bro`, Claude reads the skill file and executes the instructions:
+1. Looks up session UUID via `~/.claude/sessions/{ppid}.json` (PPID lookup, fallback to mtime in `~/.claude/projects/{encoded-cwd}/`)
+2. Reads chat title from session jsonl (`type:"custom-title"` > `type:"ai-title"` > first user message)
+3. Resolves tag = slug + `-{6-hex}` postfix
+4. Detects rename if marker has different `lastKnownTitle`
+5. Loads existing `_principles.md`, `_thread.md`, today's daily
+6. Classifies recent conversation into persistent vs ephemeral
+7. Writes what's new
 
 ---
 
@@ -322,8 +380,9 @@ Picked once per repo on first `/bro`:
 
 Files inside the chosen root:
 - `_principles.md` — repo-wide persistent
-- `{tag}/_thread.md` — thread-wide persistent
-- `{tag}/{YYYY-MM-DD}.md` — daily ephemeral
+- `{tag-with-postfix}/_thread.md` — thread-wide persistent
+- `{tag-with-postfix}/.session.json` — session marker (UUID, title history, rename tracking)
+- `{tag-with-postfix}/{YYYY-MM-DD}.md` — daily ephemeral
 
 Change root anytime with `/bro setup` — switching offers to copy `_principles.md` and `_thread.md` to the new location (daily files stay put).
 
@@ -338,21 +397,14 @@ bro checks GitHub for a new version once per week. If a new version exists, it t
 
 After updating, restart Claude Desktop (or open a new chat) to load the new skill version.
 
-**Major version bumps** (e.g., v1.x → v2.x): the skill warns explicitly during update if the storage layout changed. v1 stored centrally in `~/.claude/bro/` or `~/Desktop/bro-workspace/`; v2 stores per-repo. Old logs stay where they are — v2 starts fresh in each repo via `/bro setup`.
-
----
-
-## Migration from v1
-
-v2 doesn't auto-migrate v1 logs. Old logs (typically in `~/Desktop/bro-workspace/` or `~/.claude/bro/`) stay where they were as an archive. New logs in v2 go per-repo into `{cwd}/bro/` (or `.claude/bro/`).
-
-If you want to keep using old logs as reference, just leave them. If you want to manually move thread folders into new repos, copy the relevant `{tag}/` folders into the appropriate `{repo}/bro/` location.
+**Major version bumps** (e.g., v1.x → v2.x): the skill warns explicitly during update if the storage layout changed. v2 added per-repo storage; v2.1 added `/bro migrate` for LLM-driven legacy conversion. Old logs always preserved.
 
 ---
 
 ## Changelog
 
-- **v2.0.0** — three-tier architecture (`_principles.md` repo-wide + `_thread.md` thread-wide + daily ephemeral). Per-repo storage (no centralized location). Auto-tag from chat's first user message + session UUID for collision safety. Visible storage default (`bro/` in repo root) with auto-`.gitignore`. Interactive promotion prompts (ephemeral → persistent). Markers vocabulary standardized (`(sticky)`, `(carried since)`, `(чтобы не возвращались)`, etc.). Bilingual handling rules explicit. Major-bump warning on `/bro update`. **Breaking:** v1 logs not auto-migrated; v2 starts fresh per repo.
+- **v2.1.0** — Tag now derives from chat title (`customTitle` > `aiTitle` > first user message > timestamp fallback). UUID postfix (6 hex chars from session UUID) appended to every tag for guaranteed collision safety in parallel chats. Rename detection on every `/bro` — when chat title changes, prompts to rename tag folder. New `/bro migrate` command — LLM-driven semantic conversion of any legacy logs (v1, v2.0, mixed bro/nerve) into v2.1 format with zero data loss; originals preserved in `_legacy-pre-v2.1/`. Stop-word filter for slug generation (RU + EN). Session resolution via `~/.claude/sessions/{ppid}.json` for reliability over mtime heuristic. Explicit "no token economy" rule in default working discipline.
+- **v2.0.0** — Three-tier architecture (`_principles.md` repo-wide + `_thread.md` thread-wide + daily ephemeral). Per-repo storage (no centralized location). Auto-tag from chat's first user message. Visible storage default (`bro/` in repo root) with auto-`.gitignore`. Interactive promotion prompts (ephemeral → persistent). Markers vocabulary standardized (`(sticky)`, `(carried since)`, `(чтобы не возвращались)`). Bilingual handling rules explicit. Major-bump warning on `/bro update`. **Breaking:** v1 logs not auto-migrated; v2 starts fresh per repo (v2.1 added `/bro migrate` to fix this).
 - **v1.1.0** — folder-per-thread layout (parallel work streams no longer collide); `/bro list`, `/bro <tag>`, `/bro update`; weekly version check. Added `SKILL.md` mirror.
 - **v1.0.0** — initial release.
 
