@@ -1,6 +1,6 @@
 # bro — your chat holds the thread
 
-[![Version](https://img.shields.io/badge/version-2.1.0-blue)](https://github.com/balaka/bro)
+[![Version](https://img.shields.io/badge/version-2.1.1-blue)](https://github.com/balaka/bro)
 [![GitHub stars](https://img.shields.io/github/stars/balaka/bro?style=social)](https://github.com/balaka/bro/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Claude Desktop](https://img.shields.io/badge/Claude-Desktop-D97757)](https://claude.ai/download)
@@ -62,7 +62,7 @@ Only sections with material are written. Empty sections don't clutter the file.
 ## Three-tier architecture
 
 ```
-{cwd}/bro/                                  ← visible in repo root (or .claude/bro/ if hidden)
+{cwd}/bro/                                  ← single canonical visible location (always)
 ├── .gitignore                              ← ignores own contents by default
 ├── _principles.md                          ← REPO-WIDE persistent (universal context)
 └── {tag-with-postfix}/
@@ -254,7 +254,7 @@ cd ~/Projects/bro && git pull
 | `/bro` | Update memory for the current chat (auto-resolves tag from chat title) |
 | `/bro <tag>` | Use explicit tag — e.g. `/bro api-refactor` (postfix still applied) |
 | `/bro list` | Show today's threads + persistent files in this repo with title history |
-| `/bro setup` | Configure storage location for this repo (visible vs hidden) |
+| `/bro setup` | Configure storage location for this repo (default `{cwd}/bro/`; custom paths supported but rarely needed) |
 | `/bro migrate` | LLM-driven conversion of legacy logs into v2.1 three-tier format |
 | `/bro clean-legacy` | Delete `_legacy-pre-v2.1/` folders after manual review (irreversible) |
 | `/bro update` | Pull the latest bro version from GitHub |
@@ -266,23 +266,21 @@ bro also checks for updates automatically once per week and offers to pull new v
 
 ## First run
 
-On first `/bro` in a repo, the skill asks where to store memory files:
+On first `/bro` in a repo, the skill confirms storage location:
 
 ```
-Where to store memory for this repo?
+Storage for this repo will be {cwd}/bro/.
 
-1. {cwd}/bro/         — visible in repo root (recommended for analysis & review)
-2. {cwd}/.claude/bro/ — hidden inside .claude/
-3. Custom path
-
-Pick 1-3 or type a path.
+Press Enter to accept, or type a custom path if you have a specific reason.
 ```
 
-Default is **(1) visible**, so you can read, search, and analyze your logs alongside your code.
+The default is `{cwd}/bro/` — single canonical visible location. **The previously-supported hidden `.claude/bro/` option was removed in v2.1.1** to eliminate guessing about where logs live and prevent invisible-storage data loss.
 
-A `.gitignore` is added to the chosen folder that ignores all contents by default. If you want to commit `_principles.md` or `_thread.md` files (e.g., to share repo-wide context with the team), uncomment the relevant lines in that gitignore.
+Custom paths are still supported via the prompt but rarely needed (use case: shared multi-repo workspace).
 
-If legacy logs are detected (from v1 or v2.0), bro suggests `/bro migrate` to convert them.
+A `.gitignore` is added that ignores all contents by default. If you want to commit `_principles.md` or `_thread.md` files (e.g., to share repo-wide context with the team), uncomment the relevant lines in that gitignore.
+
+If legacy logs are detected (from v1, v2.0, or v2.1.0 hidden install), bro suggests `/bro migrate` or offers to relocate to canonical visible.
 
 Change location anytime with `/bro setup`.
 
@@ -370,13 +368,14 @@ When you run `/bro`, Claude reads the skill file and executes the instructions:
 
 ## Storage root
 
-Picked once per repo on first `/bro`:
+Single canonical visible location: `{cwd}/bro/`.
 
-| Option | Path | When to use |
+| Option | Path | When |
 |---|---|---|
-| Visible | `{cwd}/bro/` | Default — for analysis, search, review |
-| Hidden | `{cwd}/.claude/bro/` | If you don't want a top-level `bro/` folder |
-| Custom | Any path you choose | You know what you want |
+| Default (canonical) | `{cwd}/bro/` | Always — single source of truth, visible alongside code |
+| Custom | Any path you choose | Edge cases (shared multi-repo workspace, etc.) — rarely needed |
+
+The hidden `.claude/bro/` option was removed in v2.1.1. If you have an old v2.1.0 install with hidden storage, `/bro setup` will offer to relocate to the canonical visible path.
 
 Files inside the chosen root:
 - `_principles.md` — repo-wide persistent
@@ -403,6 +402,7 @@ After updating, restart Claude Desktop (or open a new chat) to load the new skil
 
 ## Changelog
 
+- **v2.1.1** — Removed hidden `.claude/bro/` storage option. Single canonical visible location `{cwd}/bro/` is now the only default; custom paths still supported via prompt for edge cases (shared multi-repo workspace). Rationale: hidden storage caused invisible-data losses (operator's `~/.claude/bro/product-os-design/2026-04-25.md` had unique content that would have been missed if not surfaced explicitly during migration). Single visible path eliminates guessing about where logs live. v2.1.0 hidden installs auto-detected at next `/bro setup` and offered relocation to canonical visible.
 - **v2.1.0** — Tag now derives from chat title (`customTitle` > `aiTitle` > first user message > timestamp fallback). UUID postfix (6 hex chars from session UUID) appended to every tag for guaranteed collision safety in parallel chats. Rename detection on every `/bro` — when chat title changes, prompts to rename tag folder. New `/bro migrate` command — LLM-driven semantic conversion of any legacy logs (v1, v2.0, mixed bro/nerve) into v2.1 format with zero data loss; originals preserved in `_legacy-pre-v2.1/`. Stop-word filter for slug generation (RU + EN). Session resolution via `~/.claude/sessions/{ppid}.json` for reliability over mtime heuristic. Explicit "no token economy" rule in default working discipline.
 - **v2.0.0** — Three-tier architecture (`_principles.md` repo-wide + `_thread.md` thread-wide + daily ephemeral). Per-repo storage (no centralized location). Auto-tag from chat's first user message. Visible storage default (`bro/` in repo root) with auto-`.gitignore`. Interactive promotion prompts (ephemeral → persistent). Markers vocabulary standardized (`(sticky)`, `(carried since)`, `(чтобы не возвращались)`). Bilingual handling rules explicit. Major-bump warning on `/bro update`. **Breaking:** v1 logs not auto-migrated; v2 starts fresh per repo (v2.1 added `/bro migrate` to fix this).
 - **v1.1.0** — folder-per-thread layout (parallel work streams no longer collide); `/bro list`, `/bro <tag>`, `/bro update`; weekly version check. Added `SKILL.md` mirror.

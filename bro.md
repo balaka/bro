@@ -1,13 +1,13 @@
 ---
-version: 2.1.0
-description: Session continuity memory for Claude Desktop / Claude Code. Stores persistent context (project descriptor, sticky rules, architecture, vocabulary) per repo, plus ephemeral daily logs per chat thread. Resolves thread tag from chat title (manual rename → AI-generated → first message), suffixed with 6 hex chars from session UUID for guaranteed collision safety. Three-tier layout — repo-wide _principles.md, thread-wide _thread.md, daily {date}.md. Includes /bro migrate for LLM-driven full conversion of pre-v2.1 legacy logs into the new format without data loss.
+version: 2.1.1
+description: Session continuity memory for Claude Desktop / Claude Code. Stores persistent context (project descriptor, sticky rules, architecture, vocabulary) per repo, plus ephemeral daily logs per chat thread. Resolves thread tag from chat title (manual rename → AI-generated → first message), suffixed with 6 hex chars from session UUID for guaranteed collision safety. Three-tier layout — repo-wide _principles.md, thread-wide _thread.md, daily {date}.md. Storage always visible in repo root ({cwd}/bro/) — hidden .claude/ option removed for clarity. Includes /bro migrate for LLM-driven full conversion of pre-v2.1 legacy logs into the new format without data loss.
 ---
 
 # bro — session continuity memory
 
 bro holds the middle layer of state that formal artifacts don't: mood, shortcut vocabulary, live threads, decisions, design tokens, debugging hypotheses, working-discipline rules. This layer is ephemeral in assistant attention but persistent if externalized.
 
-**v2.1 architecture:** logs live **per-repo** (not centralized), in a **three-tier layout** — repo-wide universals (`_principles.md`), thread-wide stable context (`{tag}/_thread.md`), daily ephemeral state (`{tag}/{date}.md`). Tag derives from chat title (manual rename → AI-generated → first message), with a 6-hex postfix from session UUID for guaranteed uniqueness across parallel chats. Rename-aware: when operator renames a chat, bro detects the change and offers to rename the tag folder. `/bro migrate` performs LLM-driven semantic conversion of any pre-v2.1 logs into the new format with zero data loss.
+**v2.1 architecture:** logs live **per-repo, always visible** at `{cwd}/bro/` (the previously-supported hidden `.claude/bro/` option was removed in v2.1.1 — single canonical location keeps logs inspectable and removes guessing about where to look). Three-tier layout — repo-wide universals (`_principles.md`), thread-wide stable context (`{tag}/_thread.md`), daily ephemeral state (`{tag}/{date}.md`). Tag derives from chat title (manual rename → AI-generated → first message), with a 6-hex postfix from session UUID for guaranteed uniqueness across parallel chats. Rename-aware: when operator renames a chat, bro detects the change and offers to rename the tag folder. `/bro migrate` performs LLM-driven semantic conversion of any pre-v2.1 logs into the new format with zero data loss.
 
 ---
 
@@ -82,21 +82,41 @@ Read `~/.claude/bro-config.json`. Check the `lastVersionCheck` field (ISO timest
 
 ## Section A — setup flow (storage location for this repo)
 
-v2.1 stores **per-repo**. Each repo picks its own location. Default is **visible** (`{cwd}/bro/`) so logs are inspectable, searchable, and reviewable.
+v2.1.1 stores per-repo at a **single canonical visible location**: `{cwd}/bro/`. The hidden `.claude/bro/` alternative was removed in v2.1.1 — single visible path eliminates guessing about where logs live and prevents invisible-storage data loss.
 
 ### Step 1 — show current state
 
 ```bash
 if [ -d "$(pwd)/bro" ] && [ -f "$(pwd)/bro/.gitignore" ]; then
   CURRENT="$(pwd)/bro/"
-elif [ -d "$(pwd)/.claude/bro" ] && [ -f "$(pwd)/.claude/bro/.gitignore" ]; then
-  CURRENT="$(pwd)/.claude/bro/"
 else
   CURRENT="(not configured for this repo)"
 fi
 ```
 
 Tell user: "Current storage for this repo: `{CURRENT}`."
+
+### Step 1a — migrate hidden `.claude/bro/` if it exists (post-v2.1.0 cleanup)
+
+If a `.claude/bro/` folder exists from a v2.1.0 install where operator chose hidden:
+
+```bash
+if [ -d "$(pwd)/.claude/bro" ] && [ -f "$(pwd)/.claude/bro/.gitignore" ]; then
+  HAS_LEGACY_HIDDEN=1
+fi
+```
+
+> Detected legacy hidden storage at `{cwd}/.claude/bro/`. v2.1.1 uses single visible location `{cwd}/bro/`. Move existing files to visible location?
+>
+> y / n
+
+If `y`:
+```bash
+mkdir -p "$(pwd)/bro"
+# Move all files (including .gitignore) preserving structure
+rsync -a "$(pwd)/.claude/bro/" "$(pwd)/bro/"
+rm -rf "$(pwd)/.claude/bro"
+```
 
 ### Step 2 — check for legacy v1 config
 
@@ -106,24 +126,20 @@ if [ -f ~/.claude/bro-config.json ]; then
 fi
 ```
 
-If `LEGACY` is non-empty and not pointing to `{cwd}/bro/` or `{cwd}/.claude/bro/`:
+If `LEGACY` is non-empty and not pointing to `{cwd}/bro/`:
 
-> Found legacy v1 storage at `{LEGACY}`. v2.1 stores per-repo. After picking a location below, run `/bro migrate` to convert any legacy logs into the new three-tier format (zero data loss; originals preserved in `_legacy-pre-v2.1/`).
+> Found legacy v1 storage at `{LEGACY}`. v2.1 stores per-repo at `{cwd}/bro/`. Run `/bro migrate` to convert any legacy logs into the new three-tier format (zero data loss; originals preserved in `_legacy-pre-v2.1/`).
 
-### Step 3 — ask for new location
+### Step 3 — confirm location
 
-> Where to store memory for this repo?
+> Storage for this repo will be `{cwd}/bro/`.
 >
-> 1. `{cwd}/bro/`         — visible in repo root (recommended for analysis & review)
-> 2. `{cwd}/.claude/bro/` — hidden inside `.claude/`
-> 3. Custom path
->
-> Pick 1-3 or type a path.
+> Press Enter to accept, or type a custom path if you have a specific reason (e.g., shared multi-repo workspace).
 
-Resolve choice:
-- `1` → `{cwd}/bro/`
-- `2` → `{cwd}/.claude/bro/`
-- `3` or path → user input (expand `~`, resolve relative)
+If user types a path: resolve (`~` → `$HOME`, relative → cwd-relative), use as `STORAGE`.
+Otherwise: `STORAGE="{cwd}/bro/"`.
+
+**Single canonical visible path is the design goal** — it lets you read logs alongside code without remembering which subfolder. Custom paths are a power-user escape hatch, not a default option.
 
 ### Step 4 — create storage + .gitignore
 
@@ -163,19 +179,23 @@ If `y`: copy `_principles.md` and `*/_thread.md` to new location (daily files st
 
 ### Step 1 — resolve storage location for this repo
 
-Detection (no per-repo config file — checked by existence):
+Detection (no per-repo config file — checked by existence). Canonical visible-only path:
 
 ```bash
 CWD=$(pwd)
 if [ -d "$CWD/bro" ] && [ -f "$CWD/bro/.gitignore" ]; then
   STORAGE="$CWD/bro"
 elif [ -d "$CWD/.claude/bro" ] && [ -f "$CWD/.claude/bro/.gitignore" ]; then
-  STORAGE="$CWD/.claude/bro"
+  # Legacy hidden storage from v2.1.0 — prompt to migrate to visible
+  echo "Hidden .claude/bro/ detected — Section A Step 1a will offer to move it to canonical visible location."
+  STORAGE="$CWD/.claude/bro"   # use temporarily; setup will migrate next /bro setup
 else
   # No bro storage in this repo yet → first-time setup
   go to Step 1a
 fi
 ```
+
+If `.claude/bro/` is detected, suggest running `/bro setup` to relocate to canonical `{cwd}/bro/` (Section A Step 1a).
 
 ### Step 1a — first-time setup in this repo
 
