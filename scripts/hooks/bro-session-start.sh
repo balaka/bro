@@ -1,0 +1,45 @@
+#!/bin/bash
+# bro v3 — SessionStart hook (matchers: startup, resume, compact, clear).
+# Injects the read-order for this workspace into every session, and flags a
+# storage-version mismatch (→ /bro migrate). Silent when bro is not enabled
+# for the current project.
+
+set -uo pipefail
+
+CONFIG="$HOME/.claude/bro-config.json"
+ROOT=$(jq -r '.root // "~/bro"' "$CONFIG" 2>/dev/null || echo "~/bro")
+ROOT="${ROOT/#\~/$HOME}"
+
+INPUT=$(cat)
+CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
+[ -z "$CWD" ] && CWD=$(pwd)
+
+# workspace resolution: explicit map in config, else lowercased basename of cwd
+WS=$(jq -r --arg c "$CWD" '.workspaces[$c] // empty' "$CONFIG" 2>/dev/null)
+if [ -z "$WS" ]; then
+  WS=$(basename "$CWD" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-._')
+fi
+WS_DIR="$ROOT/$WS"
+
+# not enabled for this project → stay silent
+[ -d "$WS_DIR" ] || exit 0
+
+# version check: skill VERSION vs store .version
+SKILL_VERSION_FILE="$HOME/.claude/bro/VERSION"
+SKILL_MAJOR=$(cut -d. -f1 "$SKILL_VERSION_FILE" 2>/dev/null || echo 3)
+STORE_MAJOR=$(cat "$ROOT/.version" 2>/dev/null || echo 0)
+
+CTX=""
+if [ "$STORE_MAJOR" -lt "$SKILL_MAJOR" ] 2>/dev/null; then
+  CTX="bro: STORAGE FORMAT OUTDATED (store v$STORE_MAJOR, skill v$SKILL_MAJOR). Tell the user and run /bro migrate before writing any bro entries."
+else
+  TODAY=$(date +%F)
+  YESTERDAY=$(ls "$WS_DIR" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$' | sort | grep -v "^$TODAY\.md$" | tail -1)
+  CTX="bro v3 active for workspace '$WS'. Read now, in order: 1) $ROOT/_principles.md 2) $WS_DIR/_workspace.md 3) $WS_DIR/$TODAY.md (today's journal; create per bro skill format if missing)"
+  [ -n "$YESTERDAY" ] && CTX="$CTX 4) $WS_DIR/$YESTERDAY (previous day)."
+  CTX="$CTX Keep the journal current through the session — the stop hook enforces freshness (threshold in ~/.claude/bro-config.json)."
+  [ -f "$ROOT/CONFLICTS.md" ] && CTX="$CTX NOTE: $ROOT/CONFLICTS.md exists — unresolved principle-merge conflicts; surface to the user when relevant."
+fi
+
+jq -cn --arg ctx "$CTX" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}'
+exit 0
