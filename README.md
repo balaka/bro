@@ -1,6 +1,6 @@
 # bro — your chat holds the thread
 
-[![Version](https://img.shields.io/badge/version-3.0.0-blue)](https://github.com/balaka/bro)
+[![Version](https://img.shields.io/badge/version-3.1.0-blue)](https://github.com/balaka/bro)
 [![GitHub stars](https://img.shields.io/github/stars/balaka/bro?style=social)](https://github.com/balaka/bro/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-D97757)](https://claude.ai/download)
@@ -61,6 +61,7 @@ Config: `~/.claude/bro-config.json` — `root` (store location), `staleMinutes` 
 - `/bro` — capture now (classify since last entry: journal / workspace summary / principles-candidate)
 - `/bro status` — freshness table for all workspaces, hook state, conflicts
 - `/bro setup` — enable bro for the current project
+- `/bro off` / `/bro on` — switch bro off/on for the current chat only (project stays enabled; the write guard stays on)
 - `/bro migrate` — deterministic migration of v1/v2 storages ([MIGRATION.md](./MIGRATION.md))
 - `/bro update` — pull latest + reinstall (idempotent)
 
@@ -76,6 +77,7 @@ Migration is a **script** (`scripts/bro-migrate.sh`), not model improvisation �
 
 ## Changelog
 
+- **3.1.0** — per-chat off switch: `/bro off` / `/bro on` (session-scoped; hooks check `~/.claude/bro/off/<session_id>`)
 - **3.0.0** — central store; project+day unit (thread folders retired); global principles; hook enforcement (session-start injection, stop turnstile, write guard, version check); deterministic script migration; skill rewritten to current Anthropic skill guidelines
 - **2.1.1** — removed hidden `.claude/bro/` storage option
 - **2.1.0** — chat-title tag resolution, UUID postfix, `/bro migrate`

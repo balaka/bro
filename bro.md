@@ -1,7 +1,7 @@
 ---
 name: bro
-version: 3.0.0
-description: Session continuity journal with hook enforcement. One central store (~/bro) — global principles, one summary and shared daily journals per workspace, an INDEX over everything. Hooks inject read-order at session start, enforce journal freshness at stop, and guard legacy paths. Use /bro to capture now; also status, migrate, setup, update.
+version: 3.1.0
+description: Session continuity journal with hook enforcement. One central store (~/bro) — global principles, one summary and shared daily journals per workspace, an INDEX over everything. Hooks inject read-order at session start, enforce journal freshness at stop, and guard legacy paths. Use /bro to capture now; also status, setup, off/on per chat, migrate, update.
 ---
 
 # bro v3 — enforced session journal
@@ -29,8 +29,16 @@ The unit is **workspace + day**, not chat. Parallel chats write sections into th
 - `/bro` (no argument) → **Capture** (below).
 - `/bro status` → **Status**.
 - `/bro setup` → **Setup**.
+- `/bro off` / `/bro on` → **Per-chat switch**.
 - `/bro migrate` → **Migrate**.
 - `/bro update` → **Update**.
+
+## Per-chat switch (off / on)
+
+Enablement is per-project (a workspace in the store), but any single chat can opt out:
+
+- `/bro off` — use Bash: `mkdir -p ~/.claude/bro/off && touch ~/.claude/bro/off/${CLAUDE_SESSION_ID}`. Report: bro is off for this chat only (session-start injection and the stop turnstile skip it; the write guard stays on — it protects data, not discipline). Other chats are unaffected; the switch survives reopening this same chat.
+- `/bro on` — use Bash: `rm -f ~/.claude/bro/off/${CLAUDE_SESSION_ID}`. Report: bro is back on for this chat from the next session start.
 
 ## Capture (default)
 

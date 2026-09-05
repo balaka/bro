@@ -14,6 +14,10 @@ INPUT=$(cat)
 CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 [ -z "$CWD" ] && CWD=$(pwd)
 
+# per-chat off switch: /bro off touches ~/.claude/bro/off/<session_id>
+SID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
+[ -n "$SID" ] && [ -f "$HOME/.claude/bro/off/$SID" ] && exit 0
+
 # workspace resolution: explicit map in config, else lowercased basename of cwd
 WS=$(jq -r --arg c "$CWD" '.workspaces[$c] // empty' "$CONFIG" 2>/dev/null)
 if [ -z "$WS" ]; then

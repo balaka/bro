@@ -17,6 +17,10 @@ CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
 PROMPT_ID=$(echo "$INPUT" | jq -r '.prompt_id // "none"' 2>/dev/null)
 [ -z "$CWD" ] && CWD=$(pwd)
 
+# per-chat off switch: /bro off touches ~/.claude/bro/off/<session_id>
+SID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
+[ -n "$SID" ] && [ -f "$HOME/.claude/bro/off/$SID" ] && exit 0
+
 WS=$(jq -r --arg c "$CWD" '.workspaces[$c] // empty' "$CONFIG" 2>/dev/null)
 [ -z "$WS" ] && WS=$(basename "$CWD" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-._')
 WS_DIR="$ROOT/$WS"
