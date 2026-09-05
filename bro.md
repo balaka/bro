@@ -1,6 +1,6 @@
 ---
 name: bro
-version: 3.2.0
+version: 3.2.1
 description: Session continuity journal with hook enforcement. One central store (~/bro) — global principles, one summary and shared daily journals per workspace, an INDEX over everything. Hooks inject read-order at session start, enforce journal freshness at stop, and guard legacy paths. Use /bro to capture now; also status, setup, off/on per chat, migrate, update.
 ---
 
@@ -111,9 +111,10 @@ Universal rules that apply in every workspace: working discipline, privacy bound
 
 ## Status
 
-1. Use Bash: `cat ~/bro/INDEX.md`; show per-workspace freshness and open-tail counts.
+1. Use Bash: `~/.claude/bro/bin/bro-harvest.sh --all --quiet && cat ~/bro/INDEX.md`; show per-workspace freshness, open-tail counts, and the **Reviews due** section.
 2. Report threshold and hook state: `jq '.staleMinutes, .root' ~/.claude/bro-config.json` and whether `~/.claude/bro/bin/` scripts are registered in `~/.claude/settings.json`.
 3. Flag stale workspaces (last entry > 7 days), pending `_rule-candidates.md` entries (walk the operator through accept/reject), and `CONFLICTS.md` if present.
+4. When **Reviews due** is non-empty, run the review cycle with the operator, one principle at a time: still alive and correct → extend `Пересмотр:` with a LONGER interval than the last one (spaced-repetition logic: proven rules get checked less often); needs change → supersede with a new entry referencing the old id; dead → mark superseded, never delete.
 
 ## Harvest (manual)
 

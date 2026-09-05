@@ -49,6 +49,8 @@ else
   [ "$NOPEN" -gt 0 ] 2>/dev/null && CTX="$CTX Open items: $NOPEN unchecked in $WS_DIR/open.md — review what today's work touches."
   NRULE=$(grep -c '^- \[ \]' "$ROOT/_rule-candidates.md" 2>/dev/null || echo 0)
   [ "$NRULE" -gt 0 ] 2>/dev/null && CTX="$CTX Rule candidates pending operator confirmation: $NRULE in $ROOT/_rule-candidates.md."
+  NDUE=$(awk -v today="$(date +%F)" '/\*\*Пересмотр:\*\*/ { if ($NF <= today) n++ } END { print n+0 }' "$ROOT/_principles.md" 2>/dev/null)
+  [ "$NDUE" -gt 0 ] 2>/dev/null && CTX="$CTX Principle reviews DUE: $NDUE (list in INDEX.md, section Reviews due) — walk the operator through them: alive → extend the date with a longer interval; stale → supersede."
   [ -f "$ROOT/CONFLICTS.md" ] && CTX="$CTX NOTE: $ROOT/CONFLICTS.md exists — unresolved principle-merge conflicts; surface to the user when relevant."
 fi
 

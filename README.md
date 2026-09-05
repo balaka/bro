@@ -1,6 +1,6 @@
 # bro — your chat holds the thread
 
-[![Version](https://img.shields.io/badge/version-3.2.0-blue)](https://github.com/balaka/bro)
+[![Version](https://img.shields.io/badge/version-3.2.1-blue)](https://github.com/balaka/bro)
 [![GitHub stars](https://img.shields.io/github/stars/balaka/bro?style=social)](https://github.com/balaka/bro/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-D97757)](https://claude.ai/download)
@@ -82,6 +82,7 @@ Migration is a **script** (`scripts/bro-migrate.sh`), not model improvisation �
 
 ## Changelog
 
+- **3.2.1** — principle review dates enforced: harvest writes a Reviews-due section into INDEX.md, the session-start hook reports due counts, /bro status runs the spaced-repetition review cycle
 - **3.2.0** — typed records: harvest script collects DECIDED/TAIL/TERM/RULE markers from journals into per-workspace registers (decisions.md, open.md, vocab.md) and a global rule-candidates queue; INDEX.md becomes a generated view with open-tail counts; anchored section headers
 - **3.1.0** — per-chat off switch: `/bro off` / `/bro on` (session-scoped; hooks check `~/.claude/bro/off/<session_id>`)
 - **3.0.0** — central store; project+day unit (thread folders retired); global principles; hook enforcement (session-start injection, stop turnstile, write guard, version check); deterministic script migration; skill rewritten to current Anthropic skill guidelines
