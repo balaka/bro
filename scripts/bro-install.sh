@@ -31,7 +31,7 @@ echo "[bro-install] installing from $SRC_DIR (v$(cat "$SRC_DIR/VERSION"))"
 # 1. scripts + version stamp
 mkdir -p "$BIN_DIR"
 cp "$SRC_DIR"/scripts/hooks/*.sh "$BIN_DIR/"
-cp "$SRC_DIR/scripts/bro-migrate.sh" "$BIN_DIR/"
+cp "$SRC_DIR/scripts/bro-migrate.sh" "$SRC_DIR/scripts/bro-harvest.sh" "$BIN_DIR/"
 cp "$SRC_DIR/VERSION" "$HOME/.claude/bro/VERSION"
 chmod +x "$BIN_DIR"/*.sh
 

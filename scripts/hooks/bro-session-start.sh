@@ -37,11 +37,18 @@ CTX=""
 if [ "$STORE_MAJOR" -lt "$SKILL_MAJOR" ] 2>/dev/null; then
   CTX="bro: STORAGE FORMAT OUTDATED (store v$STORE_MAJOR, skill v$SKILL_MAJOR). Tell the user and run /bro migrate before writing any bro entries."
 else
+  # harvest markers born since last session into the registers (idempotent, fast)
+  [ -x "$HOME/.claude/bro/bin/bro-harvest.sh" ] && "$HOME/.claude/bro/bin/bro-harvest.sh" --root "$ROOT" --workspace "$WS" --quiet 2>/dev/null
+
   TODAY=$(date +%F)
   YESTERDAY=$(ls "$WS_DIR" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$' | sort | grep -v "^$TODAY\.md$" | tail -1)
   CTX="bro v3 active for workspace '$WS'. Read now, in order: 1) $ROOT/_principles.md 2) $WS_DIR/_workspace.md 3) $WS_DIR/$TODAY.md (today's journal; create per bro skill format if missing)"
   [ -n "$YESTERDAY" ] && CTX="$CTX 4) $WS_DIR/$YESTERDAY (previous day)."
   CTX="$CTX Keep the journal current through the session — the stop hook enforces freshness (threshold in ~/.claude/bro-config.json)."
+  NOPEN=$(grep -c '^- \[ \]' "$WS_DIR/open.md" 2>/dev/null || echo 0)
+  [ "$NOPEN" -gt 0 ] 2>/dev/null && CTX="$CTX Open items: $NOPEN unchecked in $WS_DIR/open.md — review what today's work touches."
+  NRULE=$(grep -c '^- \[ \]' "$ROOT/_rule-candidates.md" 2>/dev/null || echo 0)
+  [ "$NRULE" -gt 0 ] 2>/dev/null && CTX="$CTX Rule candidates pending operator confirmation: $NRULE in $ROOT/_rule-candidates.md."
   [ -f "$ROOT/CONFLICTS.md" ] && CTX="$CTX NOTE: $ROOT/CONFLICTS.md exists — unresolved principle-merge conflicts; surface to the user when relevant."
 fi
 
