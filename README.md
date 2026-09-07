@@ -1,6 +1,6 @@
 # bro — your chat holds the thread
 
-[![Version](https://img.shields.io/badge/version-3.3.0-blue)](https://github.com/balaka/bro)
+[![Version](https://img.shields.io/badge/version-3.3.1-blue)](https://github.com/balaka/bro)
 [![GitHub stars](https://img.shields.io/github/stars/balaka/bro?style=social)](https://github.com/balaka/bro/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-D97757)](https://claude.ai/download)
@@ -82,6 +82,7 @@ Migration is a **script** (`scripts/bro-migrate.sh`), not model improvisation �
 
 ## Changelog
 
+- **3.3.1** — INDEX generation no longer lists live lock directories as workspaces
 - **3.3.0** — hardening after adversarial audit (28 findings): upward-walk workspace resolution (subfolders no longer silently disable bro); registers included in the session read-order; journal/marker format taught by the hook itself; anchored harvest dedup (d-1 no longer hides inside d-10); relaxed marker grammar (bold/bulleted/indented, malformed ids recovered, multi-line bodies joined); per-register locks + atomic INDEX writes (concurrent sessions safe); review dates parsed by shape, not position; store version self-heals for organic installs; jq-less fallbacks in all hooks; write guard also protects bro-view mirrors; migrate survives paths with spaces and re-runs; installer checks git, copies atomically
 - **3.2.1** — principle review dates enforced: harvest writes a Reviews-due section into INDEX.md, the session-start hook reports due counts, /bro status runs the spaced-repetition review cycle
 - **3.2.0** — typed records: harvest script collects DECIDED/TAIL/TERM/RULE markers from journals into per-workspace registers (decisions.md, open.md, vocab.md) and a global rule-candidates queue; INDEX.md becomes a generated view with open-tail counts; anchored section headers

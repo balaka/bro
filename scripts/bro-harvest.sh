@@ -143,7 +143,7 @@ harvest_ws() {
 if [ "$ALL" = 1 ]; then
   for D in "$ROOT"/*/; do
     B=$(basename "$D")
-    case "$B" in _archive|_principles-sources) continue ;; esac
+    case "$B" in _archive|_principles-sources|*.lock) continue ;; esac
     harvest_ws "$B"
   done
 else
@@ -160,7 +160,7 @@ if lock "$ROOT/INDEX.md"; then
     echo "|---|---|---|---|"
     for D in "$ROOT"/*/; do
       B=$(basename "$D")
-      case "$B" in _archive|_principles-sources) continue ;; esac
+      case "$B" in _archive|_principles-sources|*.lock) continue ;; esac
       NF=$(find "$D" -name "*.md" -type f | wc -l | tr -d ' ')
       LAST=$(find "$D" -maxdepth 1 -name "[0-9]*.md" -type f -exec basename {} .md \; 2>/dev/null | sort | tail -1)
       NOPEN=$(grep -c '^- \[ \]' "$D/open.md" 2>/dev/null || true); [ -n "$NOPEN" ] || NOPEN=0
