@@ -40,7 +40,8 @@ done
 ROOT="${ROOT/#\~/$HOME}"
 
 TS=$(date +%Y%m%d-%H%M%S)
-STORE_VERSION_REQUIRED=3
+# one source of truth for the store major: the installed skill VERSION
+STORE_VERSION_REQUIRED=$(cut -d. -f1 "$HOME/.claude/bro/VERSION" 2>/dev/null || echo 3)
 
 say()  { echo "[bro-migrate] $*"; }
 act()  { if [ "$DRY_RUN" = 1 ]; then echo "  DRY: $*"; else "$@"; fi }
@@ -133,16 +134,22 @@ $WS"
       if [ "$N" -eq 1 ] && [ ! -f "$OUT" ]; then
         cp "$MATCHES" "$OUT"
       else
-        for F in $MATCHES; do
+        # newline-safe iteration (paths may contain spaces: "xovi ai svelte", …);
+        # per-thread idempotency guard makes a re-run after a crash safe
+        while IFS= read -r F; do
+          [ -n "$F" ] || continue
           TAGDIR=$(dirname "$F")
           TAG=$([ "$TAGDIR" = "$SRC" ] && echo "root" || basename "$TAGDIR")
+          if [ -f "$OUT" ] && grep -qF "## (thread: $TAG — merged by v3 migration)" "$OUT"; then
+            continue
+          fi
           {
             echo ""
             echo "## (thread: $TAG — merged by v3 migration)"
             echo ""
             cat "$F"
           } >> "$OUT"
-        done
+        done <<< "$MATCHES"
       fi
     done
 

@@ -14,8 +14,11 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd || true
 
 # curl-pipe mode: no repo around this script → clone to temp
 if [ -z "$SRC_DIR" ] || [ ! -f "$SRC_DIR/VERSION" ]; then
+  command -v git >/dev/null || { echo "bro-install: git is required" >&2; exit 1; }
   TMP=$(mktemp -d)
-  git clone --depth 1 "$REPO_URL" "$TMP/bro" >/dev/null 2>&1
+  if ! git clone --depth 1 "$REPO_URL" "$TMP/bro" 2>&1 | tail -2; then
+    echo "bro-install: git clone of $REPO_URL failed (network/proxy?)" >&2; exit 1
+  fi
   SRC_DIR="$TMP/bro"
 fi
 
@@ -28,12 +31,14 @@ CONFIG="$HOME/.claude/bro-config.json"
 
 echo "[bro-install] installing from $SRC_DIR (v$(cat "$SRC_DIR/VERSION"))"
 
-# 1. scripts + version stamp
+# 1. scripts + version stamp — atomic per file (cp to tmp + mv), so hooks
+# executing concurrently never read a half-written script
 mkdir -p "$BIN_DIR"
-cp "$SRC_DIR"/scripts/hooks/*.sh "$BIN_DIR/"
-cp "$SRC_DIR/scripts/bro-migrate.sh" "$SRC_DIR/scripts/bro-harvest.sh" "$BIN_DIR/"
-cp "$SRC_DIR/VERSION" "$HOME/.claude/bro/VERSION"
-chmod +x "$BIN_DIR"/*.sh
+for f in "$SRC_DIR"/scripts/hooks/*.sh "$SRC_DIR/scripts/bro-migrate.sh" "$SRC_DIR/scripts/bro-harvest.sh"; do
+  b=$(basename "$f")
+  cp "$f" "$BIN_DIR/.$b.new" && chmod +x "$BIN_DIR/.$b.new" && mv "$BIN_DIR/.$b.new" "$BIN_DIR/$b"
+done
+cp "$SRC_DIR/VERSION" "$HOME/.claude/bro/.VERSION.new" && mv "$HOME/.claude/bro/.VERSION.new" "$HOME/.claude/bro/VERSION"
 
 # 2. skill (canonical location); retire the v2 command file if present
 mkdir -p "$SKILL_DIR"
@@ -53,6 +58,12 @@ else
       | .staleMinutes = (.staleMinutes // 30)
       | .workspaces = (.workspaces // {})' "$CONFIG" > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
 fi
+
+# 3b. store: create root + version stamp for organic (never-migrated) installs,
+# so session-start doesn't demand a migration that has nothing to migrate
+STORE_ROOT=$(jq -r '.root // "~/bro"' "$CONFIG"); STORE_ROOT="${STORE_ROOT/#\~/$HOME}"
+mkdir -p "$STORE_ROOT"
+[ -f "$STORE_ROOT/.version" ] || cut -d. -f1 "$SRC_DIR/VERSION" > "$STORE_ROOT/.version"
 
 # 4. hooks in settings.json — replace any previous bro entries, then add ours
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"

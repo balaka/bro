@@ -1,58 +1,113 @@
 #!/bin/bash
-# bro v3 — SessionStart hook (matchers: startup, resume, compact, clear).
-# Injects the read-order for this workspace into every session, and flags a
-# storage-version mismatch (→ /bro migrate). Silent when bro is not enabled
-# for the current project.
+# bro v3.3 — SessionStart hook (matchers: startup, resume, compact, clear).
+# Injects the read-order (principles, workspace summary, REGISTERS, journals),
+# self-heals a missing store version stamp, flags legacy v2 logs in cwd,
+# and teaches the journal/marker format so every chat can write typed records.
+# Workspace resolution walks UP from cwd (config map first, then dir slugs),
+# so sessions started in project subfolders still find their workspace.
+# Silent when bro is not enabled for the project or /bro off is set for the chat.
 
 set -uo pipefail
 
+command -v jq >/dev/null 2>&1 && HAS_JQ=1 || HAS_JQ=0
 CONFIG="$HOME/.claude/bro-config.json"
-ROOT=$(jq -r '.root // "~/bro"' "$CONFIG" 2>/dev/null || echo "~/bro")
+
+if [ "$HAS_JQ" = 1 ]; then
+  ROOT=$(jq -r '.root // "~/bro"' "$CONFIG" 2>/dev/null || echo "~/bro")
+else
+  ROOT="~/bro"
+fi
 ROOT="${ROOT/#\~/$HOME}"
 
 INPUT=$(cat)
-CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
-[ -z "$CWD" ] && CWD=$(pwd)
-
-# per-chat off switch: /bro off touches ~/.claude/bro/off/<session_id>
-SID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
+jget() { # $1 = key
+  if [ "$HAS_JQ" = 1 ]; then
+    echo "$INPUT" | jq -r ".$1 // empty" 2>/dev/null
+  else
+    printf '%s' "$INPUT" | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1
+  fi
+}
+CWD=$(jget cwd); [ -z "$CWD" ] && CWD=$(pwd)
+SID=$(jget session_id)
 [ -n "$SID" ] && [ -f "$HOME/.claude/bro/off/$SID" ] && exit 0
 
-# workspace resolution: explicit map in config, else lowercased basename of cwd
-WS=$(jq -r --arg c "$CWD" '.workspaces[$c] // empty' "$CONFIG" 2>/dev/null)
-if [ -z "$WS" ]; then
-  WS=$(basename "$CWD" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-._')
-fi
-WS_DIR="$ROOT/$WS"
+slug_of() { basename "$1" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-._'; }
 
-# not enabled for this project → stay silent
+# resolution: config map (cwd, then ancestors) → dir-slug walk up to $HOME
+WS=""
+D="$CWD"
+while :; do
+  if [ "$HAS_JQ" = 1 ]; then
+    M=$(jq -r --arg c "$D" '.workspaces[$c] // empty' "$CONFIG" 2>/dev/null)
+    [ -n "$M" ] && { WS="$M"; break; }
+  fi
+  [ "$D" = "$HOME" ] || [ "$D" = "/" ] && break
+  D=$(dirname "$D")
+done
+if [ -z "$WS" ]; then
+  D="$CWD"
+  while [ "$D" != "$HOME" ] && [ "$D" != "/" ]; do
+    S=$(slug_of "$D")
+    if [ -n "$S" ] && [ -d "$ROOT/$S" ]; then WS="$S"; break; fi
+    D=$(dirname "$D")
+  done
+fi
+[ -n "$WS" ] || exit 0
+WS_DIR="$ROOT/$WS"
 [ -d "$WS_DIR" ] || exit 0
 
-# version check: skill VERSION vs store .version
-SKILL_VERSION_FILE="$HOME/.claude/bro/VERSION"
-SKILL_MAJOR=$(cut -d. -f1 "$SKILL_VERSION_FILE" 2>/dev/null || echo 3)
+# version: self-heal an organic (never-migrated) store, then compare
+SKILL_MAJOR=$(cut -d. -f1 "$HOME/.claude/bro/VERSION" 2>/dev/null || echo 3)
+[ -f "$ROOT/.version" ] || echo "$SKILL_MAJOR" > "$ROOT/.version" 2>/dev/null
 STORE_MAJOR=$(cat "$ROOT/.version" 2>/dev/null || echo 0)
 
-CTX=""
-if [ "$STORE_MAJOR" -lt "$SKILL_MAJOR" ] 2>/dev/null; then
-  CTX="bro: STORAGE FORMAT OUTDATED (store v$STORE_MAJOR, skill v$SKILL_MAJOR). Tell the user and run /bro migrate before writing any bro entries."
-else
-  # harvest markers born since last session into the registers (idempotent, fast)
-  [ -x "$HOME/.claude/bro/bin/bro-harvest.sh" ] && "$HOME/.claude/bro/bin/bro-harvest.sh" --root "$ROOT" --workspace "$WS" --quiet 2>/dev/null
+emit() { # $1 = context string
+  if [ "$HAS_JQ" = 1 ]; then
+    jq -cn --arg ctx "$1" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}'
+  else
+    printf '%s\n' "$1"   # plain stdout is also injected as context for SessionStart
+  fi
+}
 
-  TODAY=$(date +%F)
-  YESTERDAY=$(ls "$WS_DIR" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$' | sort | grep -v "^$TODAY\.md$" | tail -1)
-  CTX="bro v3 active for workspace '$WS'. Read now, in order: 1) $ROOT/_principles.md 2) $WS_DIR/_workspace.md 3) $WS_DIR/$TODAY.md (today's journal; create per bro skill format if missing)"
-  [ -n "$YESTERDAY" ] && CTX="$CTX 4) $WS_DIR/$YESTERDAY (previous day)."
-  CTX="$CTX Keep the journal current through the session — the stop hook enforces freshness (threshold in ~/.claude/bro-config.json)."
-  NOPEN=$(grep -c '^- \[ \]' "$WS_DIR/open.md" 2>/dev/null || echo 0)
-  [ "$NOPEN" -gt 0 ] 2>/dev/null && CTX="$CTX Open items: $NOPEN unchecked in $WS_DIR/open.md — review what today's work touches."
-  NRULE=$(grep -c '^- \[ \]' "$ROOT/_rule-candidates.md" 2>/dev/null || echo 0)
-  [ "$NRULE" -gt 0 ] 2>/dev/null && CTX="$CTX Rule candidates pending operator confirmation: $NRULE in $ROOT/_rule-candidates.md."
-  NDUE=$(awk -v today="$(date +%F)" '/\*\*Пересмотр:\*\*/ { if ($NF <= today) n++ } END { print n+0 }' "$ROOT/_principles.md" 2>/dev/null)
-  [ "$NDUE" -gt 0 ] 2>/dev/null && CTX="$CTX Principle reviews DUE: $NDUE (list in INDEX.md, section Reviews due) — walk the operator through them: alive → extend the date with a longer interval; stale → supersede."
-  [ -f "$ROOT/CONFLICTS.md" ] && CTX="$CTX NOTE: $ROOT/CONFLICTS.md exists — unresolved principle-merge conflicts; surface to the user when relevant."
+if [ "$STORE_MAJOR" -lt "$SKILL_MAJOR" ] 2>/dev/null; then
+  emit "bro: STORAGE FORMAT OUTDATED (store v$STORE_MAJOR, skill v$SKILL_MAJOR). Tell the user and run /bro migrate before writing any bro entries."
+  exit 0
 fi
 
-jq -cn --arg ctx "$CTX" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}'
+# harvest markers born since last session (idempotent, fast)
+[ -x "$HOME/.claude/bro/bin/bro-harvest.sh" ] && "$HOME/.claude/bro/bin/bro-harvest.sh" --root "$ROOT" --workspace "$WS" --quiet 2>/dev/null
+
+TODAY=$(date +%F)
+YESTERDAY=$(ls "$WS_DIR" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$' | sort | grep -v "^$TODAY\.md$" | tail -1)
+
+# read-order: only files that exist, registers included
+N=1; RO=""
+add() { [ -f "$1" ] && { RO="$RO $N) $1$2"; N=$((N+1)); }; return 0; }
+add "$ROOT/_principles.md" ""
+add "$WS_DIR/_workspace.md" ""
+add "$WS_DIR/decisions.md" " (decision register)"
+add "$WS_DIR/open.md" " (open items — close what today's work resolves)"
+add "$WS_DIR/vocab.md" " (vocabulary)"
+RO="$RO $N) $WS_DIR/$TODAY.md (today's journal; create if missing)"
+N=$((N+1))
+[ -n "$YESTERDAY" ] && RO="$RO $N) $WS_DIR/$YESTERDAY (previous day)"
+
+CTX="bro v3 active for workspace '$WS'. Read now, in order:$RO."
+CTX="$CTX Journal format: append '## HH:MM · <work thread> — <topic with a distinguishing detail>' sections; mark typed records on their own lines: DECIDED: / RULE: / TAIL: / TERM: (RU: РЕШЕНИЕ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:) — harvest moves them into the registers automatically. Keep the journal current — the stop hook enforces freshness."
+
+cnt() { local c; c=$(grep -c "$1" "$2" 2>/dev/null || true); [ -n "$c" ] || c=0; printf '%s' "$c" | head -1; }
+NOPEN=$(cnt '^- \[ \]' "$WS_DIR/open.md")
+[ "$NOPEN" -gt 0 ] 2>/dev/null && CTX="$CTX Open items: $NOPEN unchecked."
+NRULE=$(cnt '^- \[ \]' "$ROOT/_rule-candidates.md")
+[ "$NRULE" -gt 0 ] 2>/dev/null && CTX="$CTX Rule candidates pending operator confirmation: $NRULE in $ROOT/_rule-candidates.md."
+NDUE=$(awk -v today="$TODAY" '/\*\*Пересмотр:\*\*/ { if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) { d=substr($0,RSTART,RLENGTH); if (d<=today) n++ } } END{print n+0}' "$ROOT/_principles.md" 2>/dev/null)
+[ "$NDUE" -gt 0 ] 2>/dev/null && CTX="$CTX Principle reviews DUE: $NDUE (list in INDEX.md, section Reviews due) — walk the operator through them: alive → extend the date with a longer interval; stale → supersede."
+[ -f "$ROOT/CONFLICTS.md" ] && CTX="$CTX NOTE: $ROOT/CONFLICTS.md exists — unresolved principle-merge conflicts."
+
+# legacy v2 logs sitting in this project → tell the model to run migration
+if [ -d "$CWD/bro" ] && { [ -f "$CWD/bro/_principles.md" ] || ls "$CWD/bro"/*/.session.json >/dev/null 2>&1; }; then
+  CTX="$CTX NOTE: legacy v2 bro logs detected at $CWD/bro — run /bro migrate."
+fi
+
+emit "$CTX"
 exit 0

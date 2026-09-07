@@ -1,6 +1,6 @@
 ---
 name: bro
-version: 3.2.1
+version: 3.3.0
 description: Session continuity journal with hook enforcement. One central store (~/bro) — global principles, one summary and shared daily journals per workspace, an INDEX over everything. Hooks inject read-order at session start, enforce journal freshness at stop, and guard legacy paths. Use /bro to capture now; also status, setup, off/on per chat, migrate, update.
 ---
 
@@ -28,7 +28,7 @@ bro captures the middle layer of state that formal artifacts don't: operator sta
 
 Five record types, one rule each: the **chronicle** (journal body) is free-form and append-only; **decisions**, **open items**, **terms** and **rule candidates** are typed records born as journal markers and harvested into registers by script; **views** (INDEX.md) are generated, never hand-edited.
 
-The unit is **workspace + day**, not chat. Parallel chats write sections into the same daily file — nothing to synchronize. A workspace is "enabled" when `~/bro/<workspace>/` exists (created by `/bro setup` or migration); in projects without it, all hooks stay silent.
+The unit is **workspace + day**, not chat. Parallel chats write sections into the same daily file — nothing to synchronize. A workspace is "enabled" when `~/bro/<workspace>/` exists (created by `/bro setup` or migration); in projects without it, all hooks stay silent. Resolution walks UP from cwd: the `workspaces` map in `~/.claude/bro-config.json` (cwd, then its ancestors) wins; otherwise the first ancestor directory whose lowercased-basename slug exists in the store — so a session started in `project/active/subtask/` still lands in `project`'s workspace.
 
 ## Command routing
 
@@ -49,8 +49,8 @@ Enablement is per-project (a workspace in the store), but any single chat can op
 
 ## Capture (default)
 
-1. Resolve workspace: use Bash to read `~/.claude/bro-config.json` (`.workspaces` map keyed by cwd; fallback = lowercased basename of cwd). If `~/bro/<workspace>/` does not exist, offer `/bro setup` and stop.
-2. Read, if not already in context this session: `~/bro/_principles.md`, `~/bro/<ws>/_workspace.md`, today's and the previous daily.
+1. Resolve workspace as the hooks do: `.workspaces` map (cwd, then ancestors), else walk up from cwd taking the first ancestor whose slug exists in `~/bro/`. If none, offer `/bro setup` and stop.
+2. Read, if not already in context this session: `~/bro/_principles.md`, `~/bro/<ws>/_workspace.md`, the registers (`decisions.md`, `open.md`, `vocab.md`), today's and the previous daily.
 3. Review the conversation since the last journal entry. Classify each piece of material with the **temporal test**: would this still be true and relevant in a fresh chat tomorrow?
    - **No** → journal free text (states, events, the story of the day).
    - **Yes, project-scoped** → a typed MARKER in the journal: `DECIDED:` / `TAIL:` / `TERM:` — harvest moves it to the register.
@@ -101,6 +101,12 @@ Rules:
 
 ## People
 - **Name** — role in this workspace.
+
+## Pointers
+- <what> → `<path>` — one line per key project file a cold session must find
+  (runbooks, income logs, canonical specs). Optional but load-bearing: this
+  block is read at EVERY session start, so it is the reliable bridge from
+  bro to the project's own knowledge files.
 ```
 
 Decisions, vocabulary and open questions live in the registers — do not duplicate them here.
