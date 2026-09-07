@@ -42,9 +42,14 @@ done
 
 say() { [ "$QUIET" = 1 ] || echo "[bro-harvest] $*"; }
 
-lock() { # $1 = path to lock (lockdir = $1.lock); bounded spin
+lock() { # $1 = path to lock (lockdir = $1.lock); bounded spin + stale-lock reclaim
   local l="$1.lock" i=0
   until mkdir "$l" 2>/dev/null; do
+    # a lock older than 5 min is a crash leftover — reclaim it, else it silences
+    # register appends and INDEX regeneration forever
+    if [ -n "$(find "$l" -maxdepth 0 -mmin +5 2>/dev/null)" ]; then
+      rmdir "$l" 2>/dev/null && continue
+    fi
     i=$((i+1)); [ "$i" -gt 60 ] && return 1
     sleep 0.05
   done

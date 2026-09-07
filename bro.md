@@ -1,6 +1,6 @@
 ---
 name: bro
-version: 3.3.1
+version: 3.3.2
 description: Session continuity journal with hook enforcement. One central store (~/bro) — global principles, one summary and shared daily journals per workspace, an INDEX over everything. Hooks inject read-order at session start, enforce journal freshness at stop, and guard legacy paths. Use /bro to capture now; also status, setup, off/on per chat, migrate, update.
 ---
 
