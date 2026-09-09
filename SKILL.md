@@ -1,6 +1,6 @@
 ---
 name: bro
-version: 3.4.0
+version: 3.4.1
 description: Session continuity journal with hook enforcement. One central store (~/bro) — global principles, one summary and shared daily journals per workspace, an INDEX over everything. Hooks inject read-order at session start, enforce journal freshness at stop, and guard legacy paths. Use /bro to capture now; also status, setup, off/on per chat, migrate, update.
 ---
 
@@ -90,7 +90,7 @@ Rules:
 - `decisions.md` — one `### <id> (date) [active]` block per decision, with the journal section it was born in. To retire a decision, change `[active]` to `[superseded by <id>]` — never delete.
 - `open.md` — checklist. Close by hand: `- [x] … — закрыт YYYY-MM-DD: <чем>`. The session-start hook reports the count of unchecked items — review them against the day's work; close what got done.
 - `vocab.md` — terms in the operator's words with birth dates.
-- `_rule-candidates.md` (global) — every `RULE:` lands here. On capture or `/bro status`, surface pending candidates to the operator; on confirmation, write the rule into `_principles.md` (category + anchors form) and mark `[x] принят`; on rejection mark `[-] отклонён`. Never move a rule into principles without the operator's word.
+- `_rule-candidates.md` (global) — every `RULE:` lands here. Review cadence is enforced: when the queue reaches 10 or 7 days pass since the last review, the session-start hook demands a batched review; after it, stamp `date +%F > ~/bro/.last-rule-review`. On capture or `/bro status`, surface pending candidates to the operator; on confirmation, write the rule into `_principles.md` (category + anchors form) and mark `[x] принят`; on rejection mark `[-] отклонён`. Never move a rule into principles without the operator's word.
 
 ## `_workspace.md` format (thin)
 

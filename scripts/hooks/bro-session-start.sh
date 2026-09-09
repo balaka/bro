@@ -106,6 +106,17 @@ NOPEN=$(cnt '^- \[ \]' "$WS_DIR/open.md")
 [ "$NOPEN" -gt 0 ] 2>/dev/null && CTX="$CTX Open items: $NOPEN unchecked."
 NRULE=$(cnt '^- \[ \]' "$ROOT/_rule-candidates.md")
 [ "$NRULE" -gt 0 ] 2>/dev/null && CTX="$CTX Rule candidates pending operator confirmation: $NRULE in $ROOT/_rule-candidates.md."
+# review cadence: queue >= 10 OR 7+ days since last review with a non-empty queue
+LASTREV=$(cat "$ROOT/.last-rule-review" 2>/dev/null || echo "")
+if [ -n "$LASTREV" ]; then
+  LASTSEC=$(date -j -f %Y-%m-%d "$LASTREV" +%s 2>/dev/null || date -d "$LASTREV" +%s 2>/dev/null || echo 0)
+else
+  LASTSEC=0
+fi
+REVDAYS=$(( ( $(date +%s) - LASTSEC ) / 86400 ))
+if [ "$NRULE" -ge 10 ] 2>/dev/null || { [ "$NRULE" -gt 0 ] 2>/dev/null && [ "$REVDAYS" -ge 7 ]; }; then
+  CTX="$CTX RULE REVIEW DUE (queue $NRULE, last review ${REVDAYS}d ago; trigger: >=10 or 7d): propose a batched review to the operator this session — group duplicates, recommend verdicts, they answer yes/no. After the review run: date +%F > $ROOT/.last-rule-review"
+fi
 NDUE=$(awk -v today="$TODAY" '/\*\*Пересмотр:\*\*/ { if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) { d=substr($0,RSTART,RLENGTH); if (d<=today) n++ } } END{print n+0}' "$ROOT/_principles.md" 2>/dev/null)
 [ "$NDUE" -gt 0 ] 2>/dev/null && CTX="$CTX Principle reviews DUE: $NDUE (list in INDEX.md, section Reviews due) — walk the operator through them: alive → extend the date with a longer interval; stale → supersede."
 [ -f "$ROOT/CONFLICTS.md" ] && CTX="$CTX NOTE: $ROOT/CONFLICTS.md exists — unresolved principle-merge conflicts."

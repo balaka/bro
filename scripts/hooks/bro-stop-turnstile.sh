@@ -98,12 +98,13 @@ fi
 
 touch "$GUARD" 2>/dev/null
 
+NOWSTAMP="$(date '+%F %H:%M (%A)')"
 if [ ! -f "$TODAY_FILE" ]; then
-  REASON="bro turnstile: no journal for today. Create $TODAY_FILE (format: '# bro — $(date +%F) / $WS' + '## HH:MM — <topic>' section; markers DECIDED:/RULE:/TAIL:/TERM:, RU aliases РЕШЕНИЕ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:) and log this session's substance, then finish your reply."
+  REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: no journal for today. Create $TODAY_FILE (format: '# bro — $(date +%F) / $WS' + '## HH:MM · <thread> — <topic>' section; markers DECIDED:/RULE:/TAIL:/TERM:, RU aliases РЕШЕНИЕ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:) and log this session's substance, then finish your reply."
 elif [ "$fresh" = 0 ]; then
-  REASON="bro turnstile: journal $TODAY_FILE is ${AGE_MIN}min stale (threshold ${STALE_MIN}min). Append a '## HH:MM — <topic>' section covering what happened since the last entry, then finish your reply.${LINT:+ Also fix:$LINT}"
+  REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: journal $TODAY_FILE is ${AGE_MIN}min stale (threshold ${STALE_MIN}min). Append a '## HH:MM · <thread> — <topic>' section covering what happened since the last entry, then finish your reply.${LINT:+ Also fix:$LINT}"
 else
-  REASON="bro turnstile: journal format issues in $TODAY_FILE —$LINT Fix them, then finish your reply."
+  REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: journal format issues in $TODAY_FILE —$LINT Fix them, then finish your reply."
 fi
 
 if [ "$HAS_JQ" = 1 ]; then

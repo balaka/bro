@@ -1,6 +1,6 @@
 # bro — your chat holds the thread
 
-[![Version](https://img.shields.io/badge/version-3.4.0-blue)](https://github.com/balaka/bro)
+[![Version](https://img.shields.io/badge/version-3.4.1-blue)](https://github.com/balaka/bro)
 [![GitHub stars](https://img.shields.io/github/stars/balaka/bro?style=social)](https://github.com/balaka/bro/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-D97757)](https://claude.ai/download)
@@ -82,6 +82,7 @@ Migration is a **script** (`scripts/bro-migrate.sh`), not model improvisation �
 
 ## Changelog
 
+- **3.4.1** — rule-review cadence enforced (queue >=10 or 7 days -> session-start demands a batched review); every turnstile block now carries NOW (date, time, weekday) so chats re-sync their clock each time they are nudged
 - **3.4.0** — input formats get enforcers: session context now carries the bro version and current date/time+weekday (chats stop guessing the hour and greeting good-night at noon); stop-hook lint checks section-header format, future timestamps and marker-like lines missing their colon; harvest reports principles with missing Правило/Родилось/Пересмотр fields in a Format-warnings INDEX section; broken bro-config.json is announced instead of silently defaulting
 - **3.3.2** — stale locks (crash leftovers, >5 min) are reclaimed instead of silencing register appends and INDEX regeneration forever
 - **3.3.1** — INDEX generation no longer lists live lock directories as workspaces
