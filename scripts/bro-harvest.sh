@@ -65,7 +65,8 @@ ensure_register() { # call ONLY under lock($1)
 # marker start: optional indent, optional "- " bullet, optional **, keyword,
 # optional single pre-colon token (id or noise), colon
 # NB: [*][*] instead of \*\* — awk -v reprocesses backslash escapes and would corrupt the regex
-MRE='^[[:space:]]*(-[[:space:]]+)?([*][*])?(DECIDED|RULE|TAIL|TERM|РЕШЕНИЕ|ПРАВИЛО|ХВОСТ|ТЕРМИН)([*][*])?( [^ :]+)?:'
+# keyword may carry a suffix («RULE-кандидат», «ХВОСТ-вопрос») — real chats write these
+MRE='^[[:space:]]*(-[[:space:]]+)?([*][*])?(DECIDED|RULE|TAIL|TERM|РЕШЕНИЕ|ПРАВИЛО|ХВОСТ|ТЕРМИН)([-–—][^ :]*)?([*][*])?( [^ :]+)?:'
 
 harvest_ws() {
   local WS="$1" WS_DIR="$ROOT/$1"
@@ -86,17 +87,19 @@ harvest_ws() {
     ' "$F" | while IFS=$'\x1f' read -r -d $'\x1e' LN SEC LINE; do
       [ -n "$LINE" ] || continue
       # normalize: strip indent, bullet, bold
-      local CLEAN KW HEAD TOK ID BODY H
+      local CLEAN KW HEAD TOK ID BODY H CH
       CLEAN=$(printf '%s' "$LINE" | sed -E 's/^[[:space:]]*(-[[:space:]]+)?//; s/\*\*//g')
       HEAD="${CLEAN%%:*}"                      # keyword [+ optional token]
       BODY="${CLEAN#*:}"; BODY="${BODY# }"
       KW="${HEAD%% *}"
-      TOK=""; [ "$HEAD" != "$KW" ] && TOK="${HEAD#* }"
+      KW="${KW%%-*}"; KW="${KW%%–*}"; KW="${KW%%—*}"   # strip «-кандидат»-style suffixes
+      TOK=""; [ "$HEAD" != "${HEAD%% *}" ] && TOK="${HEAD#* }"
+      H=$(printf '%s|%s' "$(basename "$F")" "$LINE" | shasum | cut -c1-6)
+      CH=$(printf '%s' "$BODY" | shasum | cut -c1-4)
       if printf '%s' "$TOK" | grep -qE '^[A-Za-z]-[A-Za-z0-9-]+$'; then
         ID="$TOK"
       else
         [ -n "$TOK" ] && BODY="$TOK: $BODY"    # noise token was not an id — keep it in the body
-        H=$(printf '%s|%s' "$(basename "$F")" "$LINE" | shasum | cut -c1-6)
         case "$KW" in
           DECIDED|РЕШЕНИЕ) ID="d-$H" ;;
           RULE|ПРАВИЛО)    ID="r-$H" ;;
@@ -111,17 +114,34 @@ harvest_ws() {
         DECIDED|РЕШЕНИЕ)
           lock "$DEC" || continue
           ensure_register "$DEC" "$WS — decisions" "Реестр решений: выбрали/вместо/почему. Устаревшее — [superseded by <id>], не стирать."
-          grep -q "^### ${ID} (" "$DEC" || {
+          if grep -q "^### ${ID} (" "$DEC"; then
+            # same id already in register — same record, or a collision with different content?
+            if ! grep -A1 "^### ${ID} (" "$DEC" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
+              ID="${ID}x${CH}"
+              grep -q "^### ${ID} (" "$DEC" || {
+                printf '### %s (%s) [active]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
+                say "COLLISION: id reused with different content — wrote decision $ID → $WS/decisions.md"; }
+            fi
+          else
             printf '### %s (%s) [active]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
-            say "+ decision $ID → $WS/decisions.md"; }
+            say "+ decision $ID → $WS/decisions.md"
+          fi
           unlock "$DEC"
           ;;
         TAIL|ХВОСТ)
           lock "$OPEN" || continue
           ensure_register "$OPEN" "$WS — open items" "Хвосты и открытые вопросы. Закрытие: [x] + дата/чем закрыт. Жатва закрытые не переоткрывает."
-          grep -q "^- \[.\] ${ID} ·" "$OPEN" || {
+          if grep -q "^- \[.\] ${ID} ·" "$OPEN"; then
+            if ! grep "^- \[.\] ${ID} ·" "$OPEN" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
+              ID="${ID}x${CH}"
+              grep -q "^- \[.\] ${ID} ·" "$OPEN" || {
+                printf -- '- [ ] %s · %s — родился: %s\n' "$ID" "$BODY" "$SRC" >> "$OPEN"
+                say "COLLISION: id reused with different content — wrote tail $ID → $WS/open.md"; }
+            fi
+          else
             printf -- '- [ ] %s · %s — родился: %s\n' "$ID" "$BODY" "$SRC" >> "$OPEN"
-            say "+ tail $ID → $WS/open.md"; }
+            say "+ tail $ID → $WS/open.md"
+          fi
           unlock "$OPEN"
           ;;
         TERM|ТЕРМИН)
@@ -135,9 +155,17 @@ harvest_ws() {
         RULE|ПРАВИЛО)
           lock "$RCAND" || continue
           ensure_register "$RCAND" "rule candidates (global queue)" "Кандидаты в _principles.md. В принципы — только после подтверждения оператора: [x] принят / [-] отклонён."
-          grep -q "^- \[.\] ${ID} (" "$RCAND" || {
+          if grep -q "^- \[.\] ${ID} (" "$RCAND"; then
+            if ! grep "^- \[.\] ${ID} (" "$RCAND" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
+              ID="${ID}x${CH}"
+              grep -q "^- \[.\] ${ID} (" "$RCAND" || {
+                printf -- '- [ ] %s (%s) · %s — родился: %s\n' "$ID" "$WS" "$BODY" "$SRC" >> "$RCAND"
+                say "COLLISION: id reused with different content — wrote rule-candidate $ID"; }
+            fi
+          else
             printf -- '- [ ] %s (%s) · %s — родился: %s\n' "$ID" "$WS" "$BODY" "$SRC" >> "$RCAND"
-            say "+ rule-candidate $ID → _rule-candidates.md"; }
+            say "+ rule-candidate $ID → _rule-candidates.md"
+          fi
           unlock "$RCAND"
           ;;
       esac
