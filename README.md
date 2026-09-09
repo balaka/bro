@@ -1,6 +1,6 @@
 # bro — your chat holds the thread
 
-[![Version](https://img.shields.io/badge/version-3.5.0-blue)](https://github.com/balaka/bro)
+[![Version](https://img.shields.io/badge/version-3.5.1-blue)](https://github.com/balaka/bro)
 [![GitHub stars](https://img.shields.io/github/stars/balaka/bro?style=social)](https://github.com/balaka/bro/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-D97757)](https://claude.ai/download)
@@ -82,6 +82,7 @@ Migration is a **script** (`scripts/bro-migrate.sh`), not model improvisation �
 
 ## Changelog
 
+- **3.5.1** — /bro always re-reads the principles file, making it the manual «pull the latest rules now» button for any open chat
 - **3.5.0** — fifth marker REJECTED:/ОТКАЗ: (a discussion that turned something down with nothing chosen instead finally has a home — lands in decisions.md as [rejected]); capture completeness rules baked into the skill: outcomes always typed, proof lives inside the record, promises become tails the moment they are spoken, side work is logged like main work
 - **3.4.2** — harvest bugfixes from the capture audit: id collisions across parallel chats no longer silently swallow records (suffix + loud COLLISION log); suffixed keywords (RULE-кандидат, ХВОСТ-вопрос) are recognized as their base markers
 - **3.4.1** — rule-review cadence enforced (queue >=10 or 7 days -> session-start demands a batched review); every turnstile block now carries NOW (date, time, weekday) so chats re-sync their clock each time they are nudged

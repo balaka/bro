@@ -1,6 +1,6 @@
 ---
 name: bro
-version: 3.5.0
+version: 3.5.1
 description: Session continuity journal with hook enforcement. One central store (~/bro) — global principles, one summary and shared daily journals per workspace, an INDEX over everything. Hooks inject read-order at session start, enforce journal freshness at stop, and guard legacy paths. Use /bro to capture now; also status, setup, off/on per chat, migrate, update.
 ---
 
@@ -50,7 +50,7 @@ Enablement is per-project (a workspace in the store), but any single chat can op
 ## Capture (default)
 
 1. Resolve workspace as the hooks do: `.workspaces` map (cwd, then ancestors), else walk up from cwd taking the first ancestor whose slug exists in `~/bro/`. If none, offer `/bro setup` and stop.
-2. Read, if not already in context this session: `~/bro/_principles.md`, `~/bro/<ws>/_workspace.md`, the registers (`decisions.md`, `open.md`, `vocab.md`), today's and the previous daily.
+2. Re-read `~/bro/_principles.md` NOW, always — even if it was read earlier this session: another chat may have changed it, and /bro is the manual "pull the latest rules" button. Then read, if not already in context this session: `~/bro/<ws>/_workspace.md`, the registers (`decisions.md`, `open.md`, `vocab.md`), today's and the previous daily.
 3. Review the conversation since the last journal entry. Classify each piece of material with the **temporal test**: would this still be true and relevant in a fresh chat tomorrow?
    - **No** → journal free text (states, events, the story of the day).
    - **Yes, project-scoped** → a typed MARKER in the journal: `DECIDED:` / `TAIL:` / `TERM:` — harvest moves it to the register.
