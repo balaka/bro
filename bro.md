@@ -1,6 +1,6 @@
 ---
 name: bro
-version: 3.4.2
+version: 3.5.0
 description: Session continuity journal with hook enforcement. One central store (~/bro) — global principles, one summary and shared daily journals per workspace, an INDEX over everything. Hooks inject read-order at session start, enforce journal freshness at stop, and guard legacy paths. Use /bro to capture now; also status, setup, off/on per chat, migrate, update.
 ---
 
@@ -68,6 +68,7 @@ Enablement is per-project (a workspace in the store), but any single chat can op
 Free text. Operator's verbatim quotes in the language spoken. What happened,
 what mattered, current state.
 DECIDED d-0906-1: chose X | over: Y | because: Z | revisit-if: W
+REJECTED: <what was turned down, in the operator's words; nothing chosen instead>
 RULE: <new operator instruction, verbatim>
 TAIL: <open item carried forward>
 TERM: <term> — <meaning, in the operator's words>
@@ -77,17 +78,21 @@ Rules:
 - Section time HH:MM comes from the date command — never from your sense of time (the hook hands you NOW at session start; after any pause it is the only truth).
 - Header line 1 exactly `# bro — YYYY-MM-DD / <workspace>` (the lint checks it).
 - One section per sitting; append, don't rewrite. The section header carries an ANCHOR: time · work thread — topic with a detail that distinguishes it («выключатель /bro off», not «доработки»). A cold reader a year later must place the section without any context.
-- Markers at line start, single line each: `DECIDED:` / `RULE:` / `TAIL:` / `TERM:`. Russian aliases equally valid: `РЕШЕНИЕ:` / `ПРАВИЛО:` / `ХВОСТ:` / `ТЕРМИН:`. An explicit id after the keyword (`DECIDED d-0906-1:`) is optional — harvest assigns a stable hash id when absent.
+- Markers at line start, single line each: `DECIDED:` / `REJECTED:` / `RULE:` / `TAIL:` / `TERM:`. Russian aliases equally valid: `РЕШЕНИЕ:` / `ОТКАЗ:` / `ПРАВИЛО:` / `ХВОСТ:` / `ТЕРМИН:`. An explicit id after the keyword (`DECIDED d-0906-1:`) is optional — harvest assigns a stable hash id when absent.
 - Markers are SEEDS, not final records: the harvest script moves them into the registers (decisions.md / open.md / vocab.md / _rule-candidates.md). Never hand-edit registers to add records — write a marker in the journal instead; hand-edit registers only to change status (close an item, supersede a decision, accept a rule).
 - **Operator state is journal material.** Mood, energy, life context the operator shares — record it plainly, in their own words. It is often the most valuable line for whoever resumes tomorrow.
 - Bilingual: write in the language the exchange happened in; verbatim quotes never translated; code/paths/URLs in backticks as-is.
 - Never trim or summarize existing entries. The journal is append-only history.
+- **Outcomes are complete** (§36): a finished discussion leaves its typed outcome — chose → DECIDED, turned down → REJECTED, deferred → TAIL, rule born → RULE, word born → TERM.
+- **Proof lives inside the record** (§37): the number, table, exact phrase or link a record rests on goes into the record verbatim — a paraphrase loses the evidence.
+- **A promise becomes a TAIL the moment it is spoken** (§38) — deadlines, callbacks, "I'll check" — not at session end from memory.
+- **Side work is logged like main work** (§39) — especially anything touching security or irreversibly changing data.
 
 ## Registers and harvest
 
 `bro-harvest.sh` (run automatically by the session-start hook for the current workspace; `/bro harvest` runs it over all workspaces) collects markers from journals into registers. It is idempotent (stable ids, append-only) and never closes or edits existing records.
 
-- `decisions.md` — one `### <id> (date) [active]` block per decision, with the journal section it was born in. To retire a decision, change `[active]` to `[superseded by <id>]` — never delete.
+- `decisions.md` — one `### <id> (date) [active]` block per decision; rejections land here too as `[rejected]` (id prefix o-), with the journal section it was born in. To retire a decision, change `[active]` to `[superseded by <id>]` — never delete.
 - `open.md` — checklist. Close by hand: `- [x] … — закрыт YYYY-MM-DD: <чем>`. The session-start hook reports the count of unchecked items — review them against the day's work; close what got done.
 - `vocab.md` — terms in the operator's words with birth dates.
 - `_rule-candidates.md` (global) — every `RULE:` lands here. Review cadence is enforced: when the queue reaches 10 or 7 days pass since the last review, the session-start hook demands a batched review; after it, stamp `date +%F > ~/bro/.last-rule-review`. On capture or `/bro status`, surface pending candidates to the operator; on confirmation, write the rule into `_principles.md` (category + anchors form) and mark `[x] принят`; on rejection mark `[-] отклонён`. Never move a rule into principles without the operator's word.

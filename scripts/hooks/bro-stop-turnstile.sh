@@ -87,7 +87,7 @@ if [ -f "$TODAY_FILE" ]; then
   FUT=$(grep -oE '^## [0-9]{2}:[0-9]{2}' "$TODAY_FILE" 2>/dev/null | awk -v nh="$(date +%H)" -v nm="$(date +%M)" '{hh=substr($0,4,2)+0; mm=substr($0,7,2)+0; if (hh*60+mm > nh*60+nm+3) {print substr($0,4); exit}}')
   [ -n "$FUT" ] && LINT="$LINT Section time $FUT is in the FUTURE (now $(date +%H:%M)) — take time from date, fix the header."
   # marker-like lines missing the colon are silently lost to harvest
-  SUS=$(grep -cE '^[[:space:]]*(\*\*)?(DECIDED|RULE|TAIL|TERM|РЕШЕНИЕ|ПРАВИЛО|ХВОСТ|ТЕРМИН)(\*\*)?[[:space:]][^:]*$' "$TODAY_FILE" 2>/dev/null || true)
+  SUS=$(grep -cE '^[[:space:]]*(\*\*)?(DECIDED|RULE|TAIL|TERM|REJECTED|РЕШЕНИЕ|ПРАВИЛО|ХВОСТ|ТЕРМИН|ОТКАЗ)(\*\*)?[[:space:]][^:]*$' "$TODAY_FILE" 2>/dev/null || true)
   [ -n "$SUS" ] || SUS=0
   [ "$SUS" -gt 0 ] 2>/dev/null && LINT="$LINT $SUS marker-like line(s) without ':' — harvest will skip them; write 'KEYWORD: text' or reword."
 fi
@@ -100,7 +100,7 @@ touch "$GUARD" 2>/dev/null
 
 NOWSTAMP="$(date '+%F %H:%M (%A)')"
 if [ ! -f "$TODAY_FILE" ]; then
-  REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: no journal for today. Create $TODAY_FILE (format: '# bro — $(date +%F) / $WS' + '## HH:MM · <thread> — <topic>' section; markers DECIDED:/RULE:/TAIL:/TERM:, RU aliases РЕШЕНИЕ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:) and log this session's substance, then finish your reply."
+  REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: no journal for today. Create $TODAY_FILE (format: '# bro — $(date +%F) / $WS' + '## HH:MM · <thread> — <topic>' section; markers DECIDED:/REJECTED:/RULE:/TAIL:/TERM:, RU aliases РЕШЕНИЕ:/ОТКАЗ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:) and log this session's substance, then finish your reply."
 elif [ "$fresh" = 0 ]; then
   REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: journal $TODAY_FILE is ${AGE_MIN}min stale (threshold ${STALE_MIN}min). Append a '## HH:MM · <thread> — <topic>' section covering what happened since the last entry, then finish your reply.${LINT:+ Also fix:$LINT}"
 else

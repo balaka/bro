@@ -66,7 +66,7 @@ ensure_register() { # call ONLY under lock($1)
 # optional single pre-colon token (id or noise), colon
 # NB: [*][*] instead of \*\* — awk -v reprocesses backslash escapes and would corrupt the regex
 # keyword may carry a suffix («RULE-кандидат», «ХВОСТ-вопрос») — real chats write these
-MRE='^[[:space:]]*(-[[:space:]]+)?([*][*])?(DECIDED|RULE|TAIL|TERM|РЕШЕНИЕ|ПРАВИЛО|ХВОСТ|ТЕРМИН)([-–—][^ :]*)?([*][*])?( [^ :]+)?:'
+MRE='^[[:space:]]*(-[[:space:]]+)?([*][*])?(DECIDED|RULE|TAIL|TERM|REJECTED|РЕШЕНИЕ|ПРАВИЛО|ХВОСТ|ТЕРМИН|ОТКАЗ)([-–—][^ :]*)?([*][*])?( [^ :]+)?:'
 
 harvest_ws() {
   local WS="$1" WS_DIR="$ROOT/$1"
@@ -101,16 +101,33 @@ harvest_ws() {
       else
         [ -n "$TOK" ] && BODY="$TOK: $BODY"    # noise token was not an id — keep it in the body
         case "$KW" in
-          DECIDED|РЕШЕНИЕ) ID="d-$H" ;;
-          RULE|ПРАВИЛО)    ID="r-$H" ;;
-          TAIL|ХВОСТ)      ID="t-$H" ;;
-          TERM|ТЕРМИН)     ID="v-$H" ;;
+          DECIDED|РЕШЕНИЕ)  ID="d-$H" ;;
+          RULE|ПРАВИЛО)     ID="r-$H" ;;
+          TAIL|ХВОСТ)       ID="t-$H" ;;
+          TERM|ТЕРМИН)      ID="v-$H" ;;
+          REJECTED|ОТКАЗ)   ID="o-$H" ;;
           *) continue ;;
         esac
       fi
       local SRC="$DATE · «${SEC:-без секции}»"
 
       case "$KW" in
+        REJECTED|ОТКАЗ)
+          lock "$DEC" || continue
+          ensure_register "$DEC" "$WS — decisions" "Реестр решений: выбрали/вместо/почему. Устаревшее — [superseded by <id>], не стирать."
+          if grep -q "^### ${ID} (" "$DEC"; then
+            if ! grep -A1 "^### ${ID} (" "$DEC" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
+              ID="${ID}x${CH}"
+              grep -q "^### ${ID} (" "$DEC" || {
+                printf '### %s (%s) [rejected]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
+                say "COLLISION: id reused — wrote rejection $ID → $WS/decisions.md"; }
+            fi
+          else
+            printf '### %s (%s) [rejected]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
+            say "+ rejection $ID → $WS/decisions.md"
+          fi
+          unlock "$DEC"
+          ;;
         DECIDED|РЕШЕНИЕ)
           lock "$DEC" || continue
           ensure_register "$DEC" "$WS — decisions" "Реестр решений: выбрали/вместо/почему. Устаревшее — [superseded by <id>], не стирать."

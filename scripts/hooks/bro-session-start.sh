@@ -96,7 +96,7 @@ N=$((N+1))
 [ -n "$YESTERDAY" ] && RO="$RO $N) $WS_DIR/$YESTERDAY (previous day)"
 
 CTX="bro v$SKILL_FULL active for workspace '$WS'. NOW: $TODAY $NOW ($DOW) — this is the time source; your inner sense of time is stale after any pause, so take timestamps and greetings from here or from date, never from feeling. Read now, in order:$RO."
-CTX="$CTX Journal format: append '## HH:MM · <work thread> — <topic with a distinguishing detail>' sections (HH:MM from date); mark typed records on their own lines: DECIDED: / RULE: / TAIL: / TERM: (RU: РЕШЕНИЕ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:) — harvest moves them into the registers automatically. Keep the journal current — the stop hook enforces freshness."
+CTX="$CTX Journal format: append '## HH:MM · <work thread> — <topic with a distinguishing detail>' sections (HH:MM from date); mark typed records on their own lines: DECIDED: / REJECTED: / RULE: / TAIL: / TERM: (RU: РЕШЕНИЕ:/ОТКАЗ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:) — harvest moves them into the registers automatically. Keep the journal current — the stop hook enforces freshness."
 if [ -f "$CONFIG" ] && [ "$HAS_JQ" = 1 ] && ! jq empty "$CONFIG" 2>/dev/null; then
   CTX="$CTX WARNING: ~/.claude/bro-config.json is broken JSON — bro is running on defaults; tell the user."
 fi
