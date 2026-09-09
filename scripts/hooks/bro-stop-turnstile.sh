@@ -77,7 +77,19 @@ if [ -f "$TODAY_FILE" ]; then
   head -1 "$TODAY_FILE" | grep -qE "^# bro — [0-9]{4}-[0-9]{2}-[0-9]{2}" \
     || LINT="$LINT Header must be '# bro — YYYY-MM-DD / <workspace>'."
   grep -qE "^## " "$TODAY_FILE" \
-    || LINT="$LINT At least one '## HH:MM — <topic>' section is required."
+    || LINT="$LINT At least one '## HH:MM · <thread> — <topic>' section is required."
+  # canonical section headers: '## HH:MM · <thread> — <topic>'
+  BADHDR=$(grep -cE '^## ' "$TODAY_FILE" 2>/dev/null || true); GOODHDR=$(grep -cE '^## [0-9]{2}:[0-9]{2} · .+ — ' "$TODAY_FILE" 2>/dev/null || true)
+  [ -n "$BADHDR" ] || BADHDR=0; [ -n "$GOODHDR" ] || GOODHDR=0
+  [ "$BADHDR" -gt "$GOODHDR" ] 2>/dev/null \
+    && LINT="$LINT $((BADHDR-GOODHDR)) section header(s) off-format — must be '## HH:MM · <thread> — <topic>'."
+  # future-time headers: the time was invented, not taken from date
+  FUT=$(grep -oE '^## [0-9]{2}:[0-9]{2}' "$TODAY_FILE" 2>/dev/null | awk -v nh="$(date +%H)" -v nm="$(date +%M)" '{hh=substr($0,4,2)+0; mm=substr($0,7,2)+0; if (hh*60+mm > nh*60+nm+3) {print substr($0,4); exit}}')
+  [ -n "$FUT" ] && LINT="$LINT Section time $FUT is in the FUTURE (now $(date +%H:%M)) — take time from date, fix the header."
+  # marker-like lines missing the colon are silently lost to harvest
+  SUS=$(grep -cE '^[[:space:]]*(\*\*)?(DECIDED|RULE|TAIL|TERM|РЕШЕНИЕ|ПРАВИЛО|ХВОСТ|ТЕРМИН)(\*\*)?[[:space:]][^:]*$' "$TODAY_FILE" 2>/dev/null || true)
+  [ -n "$SUS" ] || SUS=0
+  [ "$SUS" -gt 0 ] 2>/dev/null && LINT="$LINT $SUS marker-like line(s) without ':' — harvest will skip them; write 'KEYWORD: text' or reword."
 fi
 
 if [ "$fresh" = 1 ] && [ -z "$LINT" ]; then

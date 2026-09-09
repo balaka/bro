@@ -1,6 +1,6 @@
 ---
 name: bro
-version: 3.3.2
+version: 3.4.0
 description: Session continuity journal with hook enforcement. One central store (~/bro) — global principles, one summary and shared daily journals per workspace, an INDEX over everything. Hooks inject read-order at session start, enforce journal freshness at stop, and guard legacy paths. Use /bro to capture now; also status, setup, off/on per chat, migrate, update.
 ---
 
@@ -74,6 +74,7 @@ TERM: <term> — <meaning, in the operator's words>
 ```
 
 Rules:
+- Section time HH:MM comes from the date command — never from your sense of time (the hook hands you NOW at session start; after any pause it is the only truth).
 - Header line 1 exactly `# bro — YYYY-MM-DD / <workspace>` (the lint checks it).
 - One section per sitting; append, don't rewrite. The section header carries an ANCHOR: time · work thread — topic with a detail that distinguishes it («выключатель /bro off», not «доработки»). A cold reader a year later must place the section without any context.
 - Markers at line start, single line each: `DECIDED:` / `RULE:` / `TAIL:` / `TERM:`. Russian aliases equally valid: `РЕШЕНИЕ:` / `ПРАВИЛО:` / `ХВОСТ:` / `ТЕРМИН:`. An explicit id after the keyword (`DECIDED d-0906-1:`) is optional — harvest assigns a stable hash id when absent.

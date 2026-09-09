@@ -78,6 +78,9 @@ fi
 [ -x "$HOME/.claude/bro/bin/bro-harvest.sh" ] && "$HOME/.claude/bro/bin/bro-harvest.sh" --root "$ROOT" --workspace "$WS" --quiet 2>/dev/null
 
 TODAY=$(date +%F)
+NOW=$(date '+%H:%M')
+DOW=$(date '+%A')
+SKILL_FULL=$(cat "$HOME/.claude/bro/VERSION" 2>/dev/null || echo "3")
 YESTERDAY=$(ls "$WS_DIR" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$' | sort | grep -v "^$TODAY\.md$" | tail -1)
 
 # read-order: only files that exist, registers included
@@ -92,8 +95,11 @@ RO="$RO $N) $WS_DIR/$TODAY.md (today's journal; create if missing)"
 N=$((N+1))
 [ -n "$YESTERDAY" ] && RO="$RO $N) $WS_DIR/$YESTERDAY (previous day)"
 
-CTX="bro v3 active for workspace '$WS'. Read now, in order:$RO."
-CTX="$CTX Journal format: append '## HH:MM · <work thread> — <topic with a distinguishing detail>' sections; mark typed records on their own lines: DECIDED: / RULE: / TAIL: / TERM: (RU: РЕШЕНИЕ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:) — harvest moves them into the registers automatically. Keep the journal current — the stop hook enforces freshness."
+CTX="bro v$SKILL_FULL active for workspace '$WS'. NOW: $TODAY $NOW ($DOW) — this is the time source; your inner sense of time is stale after any pause, so take timestamps and greetings from here or from date, never from feeling. Read now, in order:$RO."
+CTX="$CTX Journal format: append '## HH:MM · <work thread> — <topic with a distinguishing detail>' sections (HH:MM from date); mark typed records on their own lines: DECIDED: / RULE: / TAIL: / TERM: (RU: РЕШЕНИЕ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:) — harvest moves them into the registers automatically. Keep the journal current — the stop hook enforces freshness."
+if [ -f "$CONFIG" ] && [ "$HAS_JQ" = 1 ] && ! jq empty "$CONFIG" 2>/dev/null; then
+  CTX="$CTX WARNING: ~/.claude/bro-config.json is broken JSON — bro is running on defaults; tell the user."
+fi
 
 cnt() { local c; c=$(grep -c "$1" "$2" 2>/dev/null || true); [ -n "$c" ] || c=0; printf '%s' "$c" | head -1; }
 NOPEN=$(cnt '^- \[ \]' "$WS_DIR/open.md")
