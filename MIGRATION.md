@@ -51,6 +51,30 @@ So the flow for any user, including future updates, is: update the skill →
 open any session → the hook flags the mismatch → `/bro migrate` runs the
 script → done, centrally, once.
 
+## Updating inside v3 (3.x → 3.y) — no migration
+
+The store format does not change inside a major version, so there is nothing
+to migrate: `~/bro/.version` stays `3` and the hook stays silent about it. The
+whole upgrade is re-running the installer (`/bro update`, or the install
+one-liner again): it replaces the scripts and its own hook entries in
+`~/.claude/settings.json`, and touches nothing else.
+
+What to expect after 3.5 → 3.6:
+
+- Chats that were open during the update keep the old hook set until they are
+  reopened — Claude Code reads hook registrations when a session starts.
+  After such a chat's next compaction the stop hook notices this, has the
+  chat run the harvest itself, and tells you once. Any newly opened chat
+  harvests the whole workspace anyway, so nothing is lost meanwhile.
+- The first session start runs one full harvest in the background (tens of
+  seconds on a busy store); afterwards harvest is incremental. It writes two
+  small state files per workspace, `.harvest-stamp` and `.harvest-state`.
+- If your session starts had been timing out (big workspace, 10 s hook cap),
+  the registers were lagging behind the journals. They catch up on that first
+  pass: a jump in decisions and open items is the backlog arriving.
+- Migrating a v1/v2 storage into a store that is already on 3.6 needs nothing
+  extra: migrated journals get fresh file dates, so the next pass reads them.
+
 ## After migration
 
 - Old chats can be reopened safely: the write-guard hook denies writes to

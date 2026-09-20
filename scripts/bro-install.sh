@@ -1,6 +1,6 @@
 #!/bin/bash
 # bro v3 installer — deterministic, idempotent.
-# Installs the skill, the hook scripts, default config, and registers the four
+# Installs the skill, the hook scripts, default config, and registers the
 # hooks in ~/.claude/settings.json. Safe to re-run (it replaces its own entries).
 #
 # Usage:  scripts/bro-install.sh          (from a cloned repo)
@@ -74,12 +74,16 @@ jq --arg bin "$BIN_DIR" '
     map(.hooks = (.hooks // [] | map(select((.command // "") | contains($bin) | not))))
     | map(select(.hooks | length > 0)) end;
 
+  # session start = two hooks per matcher: the context injector (fast, 10 s cap)
+  # and the harvest, async — it may take long on a first pass and must never be
+  # able to cancel the injector (pre-3.6 it ran inside it and did exactly that)
+  def start($m): {matcher:$m, hooks:[
+      {type:"command", command:($bin+"/bro-session-start.sh"), timeout:10},
+      {type:"command", command:($bin+"/bro-harvest-hook.sh"), async:true}]};
+
   .hooks = (.hooks // {})
   | .hooks.SessionStart = ((.hooks.SessionStart | scrub) + [
-      {matcher:"startup", hooks:[{type:"command", command:($bin+"/bro-session-start.sh"), timeout:10}]},
-      {matcher:"resume",  hooks:[{type:"command", command:($bin+"/bro-session-start.sh"), timeout:10}]},
-      {matcher:"compact", hooks:[{type:"command", command:($bin+"/bro-session-start.sh"), timeout:10}]},
-      {matcher:"clear",   hooks:[{type:"command", command:($bin+"/bro-session-start.sh"), timeout:10}]}
+      start("startup"), start("resume"), start("compact"), start("clear")
     ])
   | .hooks.Stop = ((.hooks.Stop | scrub) + [
       {hooks:[{type:"command", command:($bin+"/bro-stop-turnstile.sh"), timeout:15,
@@ -88,13 +92,16 @@ jq --arg bin "$BIN_DIR" '
   | .hooks.PreToolUse = ((.hooks.PreToolUse | scrub) + [
       {matcher:"Write|Edit", hooks:[{type:"command", command:($bin+"/bro-write-guard.sh"), timeout:10}]}
     ])
+  | .hooks.PreCompact = ((.hooks.PreCompact | scrub) + [
+      {hooks:[{type:"command", command:($bin+"/bro-precompact.sh"), timeout:5}]}
+    ])
 ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
 
 echo "[bro-install] done:"
 echo "  skill    → $SKILL_DIR/SKILL.md"
 echo "  scripts  → $BIN_DIR/"
 echo "  config   → $CONFIG"
-echo "  hooks    → $SETTINGS (SessionStart ×4, Stop, PreToolUse Write|Edit)"
+echo "  hooks    → $SETTINGS (SessionStart ×4: context + async harvest, Stop, PreToolUse Write|Edit, PreCompact)"
 echo ""
 echo "Open a new session (hooks load on start). If you have v1/v2 bro folders,"
 echo "the session-start hook will flag them — run /bro migrate when it does."

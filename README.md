@@ -1,6 +1,6 @@
 # bro — your chat holds the thread
 
-[![Version](https://img.shields.io/badge/version-3.5.1-blue)](https://github.com/balaka/bro)
+[![Version](https://img.shields.io/badge/version-3.6.0-blue)](https://github.com/balaka/bro)
 [![GitHub stars](https://img.shields.io/github/stars/balaka/bro?style=social)](https://github.com/balaka/bro/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-D97757)](https://claude.ai/download)
@@ -16,6 +16,8 @@ curl -fsSL https://raw.githubusercontent.com/balaka/bro/main/scripts/bro-install
 Open a new session, `cd` your project, type `/bro setup` once per project. Done — from then on the hooks do the remembering.
 
 Upgrading from v1/v2? Same command, then `/bro migrate` when the session-start hook flags your old logs. See [MIGRATION.md](./MIGRATION.md) — nothing is ever deleted.
+
+Already on v3? Same command again (or `/bro update`): it re-registers the hooks, and that is the whole upgrade — no data migration inside v3. Reopen the chats that were open during the update.
 
 ---
 
@@ -54,8 +56,10 @@ Journal entries use five markers, English or Russian: `DECIDED:` / `REJECTED:` /
 
 | Hook | Event | What it guarantees |
 |---|---|---|
-| `bro-session-start.sh` | SessionStart (startup / resume / compact / clear) | Read-order injected into every session; storage-version mismatch flagged → `/bro migrate` |
-| `bro-stop-turnstile.sh` | Stop | A turn can't end while today's journal is missing or stale (default 30 min; configurable). Blocks at most once per prompt — can't loop |
+| `bro-session-start.sh` | SessionStart (startup / resume / compact / clear) | Read-order injected into every session; storage-version mismatch flagged → `/bro migrate`. Does nothing slow, so it cannot time out |
+| `bro-harvest-hook.sh` | SessionStart, async | Markers harvested into the registers in the background, only what is new since the last pass |
+| `bro-precompact.sh` | PreCompact | Marks the session as "start owed" before every compaction, so the watchdog checks the re-injection instead of assuming it |
+| `bro-stop-turnstile.sh` | Stop | A turn can't end while today's journal is missing or stale (default 30 min; configurable). Blocks at most once per prompt — can't loop. Watchdog: a session start that never finished is recovered here and reported, never silent |
 | `bro-write-guard.sh` | PreToolUse (Write\|Edit) | Writes to retired v2 paths denied, redirected to the central store |
 
 Config: `~/.claude/bro-config.json` — `root` (store location), `staleMinutes` (turnstile threshold), `workspaces` (path→name overrides).
@@ -82,6 +86,7 @@ Migration is a **script** (`scripts/bro-migrate.sh`), not model improvisation �
 
 ## Changelog
 
+- **3.6.0** — session start can no longer die silently. Harvest used to run inside the session-start hook, before the context was emitted; once a workspace grew past two weeks of busy journals (30 s of harvest against a 10 s hook timeout) the harness cancelled the hook and discarded its output — every new, resumed or compacted chat started without principles and read-order, registers stopped filling, and nothing said so. Now: the session-start hook only injects context (0.6 s on the same workspace); harvest runs as its own `async` hook and is incremental (only journals changed since the last completed pass, only the lines added since; `--full` re-reads everything); the stop hook watches the start hook (and a PreCompact hook re-arms that watch before every compaction) — a start that never finished is recovered at the end of the first turn, logged to `~/.claude/bro/health.log`, and the operator is told; the same stop hook checks that a harvest pass completed after the session started, and has the chat run it when the background hook is not there (chats opened before the update). Upgrade = re-run the installer (`/bro update`); no data migration; reopen chats that were open
 - **3.5.1** — /bro always re-reads the principles file, making it the manual «pull the latest rules now» button for any open chat
 - **3.5.0** — fifth marker REJECTED:/ОТКАЗ: (a discussion that turned something down with nothing chosen instead finally has a home — lands in decisions.md as [rejected]); capture completeness rules baked into the skill: outcomes always typed, proof lives inside the record, promises become tails the moment they are spoken, side work is logged like main work
 - **3.4.2** — harvest bugfixes from the capture audit: id collisions across parallel chats no longer silently swallow records (suffix + loud COLLISION log); suffixed keywords (RULE-кандидат, ХВОСТ-вопрос) are recognized as their base markers

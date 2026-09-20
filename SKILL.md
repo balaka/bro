@@ -1,6 +1,6 @@
 ---
 name: bro
-version: 3.5.1
+version: 3.6.0
 description: Session continuity journal with hook enforcement. One central store (~/bro) — global principles, one summary and shared daily journals per workspace, an INDEX over everything. Hooks inject read-order at session start, enforce journal freshness at stop, and guard legacy paths. Use /bro to capture now; also status, setup, off/on per chat, migrate, update.
 ---
 
@@ -90,7 +90,7 @@ Rules:
 
 ## Registers and harvest
 
-`bro-harvest.sh` (run automatically by the session-start hook for the current workspace; `/bro harvest` runs it over all workspaces) collects markers from journals into registers. It is idempotent (stable ids, append-only) and never closes or edits existing records.
+`bro-harvest.sh` (run automatically at every session start for the current workspace — by its own background hook, so it can never delay or cancel the context injection; `/bro harvest` runs it over all workspaces) collects markers from journals into registers. It is idempotent (stable ids, append-only) and never closes or edits existing records. It is incremental: a pass reads only journals changed since the last completed pass, and in them only the lines added since then; if already-harvested lines were edited, that journal is re-read whole. A record is taken as it stands the first time it is seen — so end every marker with a blank line: text glued onto it by a later write is ignored. `--full` re-reads everything (use after restoring journals with old file dates, or after hand-removing records from a register).
 
 - `decisions.md` — one `### <id> (date) [active]` block per decision; rejections land here too as `[rejected]` (id prefix o-), with the journal section it was born in. To retire a decision, change `[active]` to `[superseded by <id>]` — never delete.
 - `open.md` — checklist. Close by hand: `- [x] … — закрыт YYYY-MM-DD: <чем>`. The session-start hook reports the count of unchecked items — review them against the day's work; close what got done.
@@ -124,13 +124,13 @@ Universal rules that apply in every workspace: working discipline, privacy bound
 ## Status
 
 1. Use Bash: `~/.claude/bro/bin/bro-harvest.sh --all --quiet && cat ~/bro/INDEX.md`; show per-workspace freshness, open-tail counts, and the **Reviews due** section.
-2. Report threshold and hook state: `jq '.staleMinutes, .root' ~/.claude/bro-config.json` and whether `~/.claude/bro/bin/` scripts are registered in `~/.claude/settings.json`.
+2. Report threshold and hook state: `jq '.staleMinutes, .root' ~/.claude/bro-config.json` and whether `~/.claude/bro/bin/` scripts are registered in `~/.claude/settings.json`. Show the last lines of `~/.claude/bro/health.log` if it exists — every line there is a session start that failed and was recovered by the stop hook; tell the operator when it happened last.
 3. Flag stale workspaces (last entry > 7 days), pending `_rule-candidates.md` entries (walk the operator through accept/reject), and `CONFLICTS.md` if present.
 4. When **Reviews due** is non-empty, run the review cycle with the operator, one principle at a time: still alive and correct → extend `Пересмотр:` with a LONGER interval than the last one (spaced-repetition logic: proven rules get checked less often); needs change → supersede with a new entry referencing the old id; dead → mark superseded, never delete.
 
 ## Harvest (manual)
 
-Run `~/.claude/bro/bin/bro-harvest.sh --all` with Bash; report what was added per register. Use after bulk journal edits or to rebuild INDEX.md.
+Run `~/.claude/bro/bin/bro-harvest.sh --all` with Bash; report what was added per register. Use after bulk journal edits or to rebuild INDEX.md. Add `--full` to ignore the incremental state and re-read every journal.
 
 ## Setup
 
@@ -151,14 +151,17 @@ Migration is a **deterministic script** — never improvise it by hand:
 ## Update
 
 1. `git -C <repo> pull` if a clone exists, else fetch the repo fresh; then run `scripts/bro-install.sh` (idempotent — it replaces its own hook entries and bumps `~/.claude/bro/VERSION`).
-2. If the new major > `~/bro/.version`, the session-start hook will demand `/bro migrate` on the next session — follow it.
+2. If the new major > `~/bro/.version`, the session-start hook will demand `/bro migrate` on the next session — follow it. Within one major (3.x → 3.y) there is never a data migration: the store format is the same, re-running the installer is the whole upgrade.
+3. Tell the operator what to expect: hook registrations are read when a session starts, so chats that are already open keep the old set until they are reopened (after such a chat's next compaction the stop hook says so once, and has the chat run the harvest itself meanwhile). Coming from 3.5 or older: the first session start runs one full harvest in the background (tens of seconds on a busy store); if session starts had been timing out there, the registers now catch up with the journals — a jump in open items and decisions is the backlog arriving, not duplication.
 
 ## What the hooks enforce (installed by bro-install.sh)
 
 | Hook | Event | Effect |
 |---|---|---|
-| bro-session-start.sh | SessionStart (startup/resume/compact/clear) | Injects read-order for the workspace; flags storage-version mismatch → `/bro migrate` |
-| bro-stop-turnstile.sh | Stop | Blocks end of turn once per prompt when today's journal is missing/stale (> `staleMinutes`, default 30) or fails lint; the model writes the entry and finishes |
+| bro-session-start.sh | SessionStart (startup/resume/compact/clear) | Injects read-order for the workspace; flags storage-version mismatch → `/bro migrate`. Does nothing slow; leaves a start mark (`~/.claude/bro/started/<session_id>`) for the stop hook |
+| bro-harvest-hook.sh | SessionStart, `async` | Harvests the workspace's markers in the background — never in the way of the injection |
+| bro-precompact.sh | PreCompact | Sets the session's start mark back to `pending`, so the injection that must follow every compaction is checked by the watchdog, not assumed |
+| bro-stop-turnstile.sh | Stop | Blocks end of turn once per prompt when today's journal is missing/stale (> `staleMinutes`, default 30) or fails lint; the model writes the entry and finishes. Watchdog, two checks: (1) if the session-start hook never finished in this session (or after a compaction), hands the chat the same context, logs it to `~/.claude/bro/health.log` and has the operator told; (2) if ten minutes after the session's start no harvest pass has completed for the workspace, has the chat run the harvest itself and tell the operator (typical cause: a chat opened before a bro update) |
 | bro-write-guard.sh | PreToolUse (Write\|Edit) | Denies writes to retired v2 storage paths (`bro/` inside repos), pointing to the central store |
 
 Config `~/.claude/bro-config.json`: `root` (store path), `staleMinutes` (turnstile threshold), `workspaces` (cwd→name overrides). All operator-tunable.

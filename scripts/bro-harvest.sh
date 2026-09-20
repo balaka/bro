@@ -14,8 +14,24 @@
 #    atomically (tmp + mv) under its own lock — concurrent sessions can't corrupt it;
 #  - review dates are extracted by shape (YYYY-MM-DD anywhere on the line), not $NF.
 #
+# v3.6 — incremental. Every run used to re-read every journal from day one
+# (~40 ms per marker: 30 s in a two-week-old busy workspace). Now a pass looks
+# only at journals modified since the last COMPLETED pass (<ws>/.harvest-stamp),
+# and inside such a journal only at the lines added since then
+# (<ws>/.harvest-state: file, line count, hash of those lines). If the already
+# harvested part of a journal was edited, the hash no longer matches and the
+# whole file is re-read — ids are stable, so nothing is duplicated. Stamp and
+# state advance only when the pass finished and every register lock was
+# obtained; a killed or contended pass is simply redone next time.
+# A record is taken as it stands the first time a pass sees it. Text that a later
+# write glues onto an already harvested marker (no blank line in between) is not
+# harvested again — before 3.6 every run re-read it and appended a second record
+# with the glued body under a new id. --full still behaves that way.
+# --full ignores stamp and state (use after restoring files with old mtimes,
+# or after hand-removing records from a register).
+#
 # Deterministic, idempotent, append-only. Registers' statuses are managed by hand.
-# Usage: bro-harvest.sh [--root <dir>] [--workspace <name> | --all] [--quiet]
+# Usage: bro-harvest.sh [--root <dir>] [--workspace <name> | --all] [--full] [--quiet]
 
 set -uo pipefail
 
@@ -26,13 +42,14 @@ else
   ROOT="~/bro"
 fi
 ROOT="${ROOT/#\~/$HOME}"
-ONLY_WS=""; ALL=0; QUIET=0
+ONLY_WS=""; ALL=0; QUIET=0; FULL=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --root) ROOT="$2"; ROOT="${ROOT/#\~/$HOME}"; shift ;;
     --workspace) ONLY_WS="$2"; shift ;;
     --all) ALL=1 ;;
+    --full) FULL=1 ;;
     --quiet) QUIET=1 ;;
   esac
   shift
@@ -74,11 +91,45 @@ harvest_ws() {
   local DEC="$WS_DIR/decisions.md" OPEN="$WS_DIR/open.md" VOC="$WS_DIR/vocab.md"
   local RCAND="$ROOT/_rule-candidates.md"
 
-  find "$WS_DIR" -maxdepth 1 -name "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md" -type f | sort | while IFS= read -r F; do
-    local DATE; DATE=$(basename "$F" .md)
+  # ---- which journals, and from which line (v3.6 incremental) ----
+  local STAMP="$WS_DIR/.harvest-stamp" STATE="$WS_DIR/.harvest-state"
+  local RUN INCR=1 F B DATE TOTAL FROM PREV PN PS BACK
+  # scratch dirs of passes that were killed long ago
+  find "$WS_DIR" -maxdepth 1 -type d -name '.harvest-run.*' -mmin +60 -exec rm -rf {} + 2>/dev/null
+  # mktemp, not $$: a leftover dir of a killed pass plus a reused pid must not silence this workspace
+  RUN=$(mktemp -d "$WS_DIR/.harvest-run.XXXXXX" 2>/dev/null) || { say "$WS: cannot create a scratch dir in $WS_DIR — workspace skipped"; return 0; }
+  : > "$RUN/start"   # its mtime is the start of this pass — it becomes the stamp if the pass completes
+  # …minus 2 s: where mtimes are coarse (1–2 s), a journal written in the very second a pass
+  # starts would tie with the stamp and never look "newer". Re-reading costs nothing. UTC: no DST.
+  BACK=$(TZ=UTC0 date -v-2S +%Y%m%d%H%M.%S 2>/dev/null || TZ=UTC0 date -d '2 seconds ago' +%Y%m%d%H%M.%S 2>/dev/null)
+  [ -n "$BACK" ] && TZ=UTC0 touch -t "$BACK" "$RUN/start" 2>/dev/null
+  if [ "$FULL" = 1 ] || [ ! -f "$STAMP" ] || [ ! -f "$STATE" ]; then
+    INCR=0
+    find "$WS_DIR" -maxdepth 1 -name "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md" -type f | sort > "$RUN/list"
+  else
+    find "$WS_DIR" -maxdepth 1 -name "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md" -type f -newer "$STAMP" | sort > "$RUN/list"
+  fi
+  say "$WS: $(wc -l < "$RUN/list" | tr -d ' ') journal(s) to read$([ "$INCR" = 0 ] && echo ' (full pass)')"
+
+  while IFS= read -r F; do
+    B=$(basename "$F"); DATE="${B%.md}"
+    TOTAL=$(wc -l < "$F" | tr -d ' ')
+    FROM=0
+    if [ "$INCR" = 1 ]; then
+      # lines already harvested stay skipped only while they are byte-identical
+      PREV=$(awk -F'\t' -v f="$B" '$1 == f { print $2 "\t" $3; exit }' "$STATE" 2>/dev/null)
+      PN="${PREV%%$'\t'*}"; PS="${PREV#*$'\t'}"
+      if [ -n "$PREV" ] && [ "$PN" -gt 0 ] 2>/dev/null && [ "$TOTAL" -ge "$PN" ] \
+         && [ "$(head -n "$PN" "$F" | shasum | cut -c1-40)" = "$PS" ]; then
+        FROM="$PN"
+      fi
+    fi
+    rm -f "$RUN/fail"
     # awk emits: LINE_NO \x1f SECTION \x1f BODY(joined) \x1e  per marker record
-    awk -v mre="$MRE" '
-      function flush() { if (ln) printf "%d\x1f%s\x1f%s\x1e", ln, sec, body; ln=0; body="" }
+    # (only markers born after line FROM; lines past TOTAL belong to the next pass)
+    awk -v mre="$MRE" -v from="$FROM" -v to="$TOTAL" '
+      function flush() { if (ln && ln > from) printf "%d\x1f%s\x1f%s\x1e", ln, sec, body; ln=0; body="" }
+      NR > to { exit }
       /^## / { flush(); sec=$0; sub(/^## /, "", sec); next }
       /^[[:space:]]*$/ { flush(); next }
       $0 ~ mre { flush(); ln=NR; body=$0; next }
@@ -113,7 +164,7 @@ harvest_ws() {
 
       case "$KW" in
         REJECTED|ОТКАЗ)
-          lock "$DEC" || continue
+          lock "$DEC" || { : > "$RUN/fail"; continue; }
           ensure_register "$DEC" "$WS — decisions" "Реестр решений: выбрали/вместо/почему. Устаревшее — [superseded by <id>], не стирать."
           if grep -q "^### ${ID} (" "$DEC"; then
             if ! grep -A1 "^### ${ID} (" "$DEC" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
@@ -129,7 +180,7 @@ harvest_ws() {
           unlock "$DEC"
           ;;
         DECIDED|РЕШЕНИЕ)
-          lock "$DEC" || continue
+          lock "$DEC" || { : > "$RUN/fail"; continue; }
           ensure_register "$DEC" "$WS — decisions" "Реестр решений: выбрали/вместо/почему. Устаревшее — [superseded by <id>], не стирать."
           if grep -q "^### ${ID} (" "$DEC"; then
             # same id already in register — same record, or a collision with different content?
@@ -146,7 +197,7 @@ harvest_ws() {
           unlock "$DEC"
           ;;
         TAIL|ХВОСТ)
-          lock "$OPEN" || continue
+          lock "$OPEN" || { : > "$RUN/fail"; continue; }
           ensure_register "$OPEN" "$WS — open items" "Хвосты и открытые вопросы. Закрытие: [x] + дата/чем закрыт. Жатва закрытые не переоткрывает."
           if grep -q "^- \[.\] ${ID} ·" "$OPEN"; then
             if ! grep "^- \[.\] ${ID} ·" "$OPEN" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
@@ -162,7 +213,7 @@ harvest_ws() {
           unlock "$OPEN"
           ;;
         TERM|ТЕРМИН)
-          lock "$VOC" || continue
+          lock "$VOC" || { : > "$RUN/fail"; continue; }
           ensure_register "$VOC" "$WS — vocabulary" "Словарь: термин — значение, словами оператора, с датой рождения."
           grep -q "^- \*\*${ID}\*\*" "$VOC" || {
             printf -- '- **%s** · %s — родился: %s\n' "$ID" "$BODY" "$SRC" >> "$VOC"
@@ -170,7 +221,7 @@ harvest_ws() {
           unlock "$VOC"
           ;;
         RULE|ПРАВИЛО)
-          lock "$RCAND" || continue
+          lock "$RCAND" || { : > "$RUN/fail"; continue; }
           ensure_register "$RCAND" "rule candidates (global queue)" "Кандидаты в _principles.md. В принципы — только после подтверждения оператора: [x] принят / [-] отклонён."
           if grep -q "^- \[.\] ${ID} (" "$RCAND"; then
             if ! grep "^- \[.\] ${ID} (" "$RCAND" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
@@ -186,8 +237,28 @@ harvest_ws() {
           unlock "$RCAND"
           ;;
       esac
-    done
-  done
+      :
+    done || : > "$RUN/fail"   # pipefail: a killed awk or loop must not count as "read"
+    # this journal is done up to line TOTAL — unless a register lock was missed
+    if [ -f "$RUN/fail" ]; then
+      : > "$RUN/incomplete"
+    else
+      printf '%s\t%s\t%s\n' "$B" "$TOTAL" "$(head -n "$TOTAL" "$F" | shasum | cut -c1-40)" >> "$RUN/state"
+    fi
+  done < "$RUN/list"
+
+  # new state lines win over old ones; the stamp moves only after a complete pass
+  { [ -f "$RUN/state" ] && cat "$RUN/state"; [ -f "$STATE" ] && cat "$STATE"; } 2>/dev/null \
+    | awk -F'\t' '!seen[$1]++' > "$RUN/state.merged"
+  mv "$RUN/state.merged" "$STATE"
+  if [ -f "$RUN/incomplete" ]; then
+    say "$WS: pass incomplete (busy register lock or interrupted read) — those journals will be re-read next pass"
+  elif [ ! -f "$STAMP" ] || [ "$RUN/start" -nt "$STAMP" ]; then
+    # forward only: a slow pass that began earlier must not pull the stamp back
+    # behind a quicker pass that began later and has already completed
+    mv "$RUN/start" "$STAMP"
+  fi
+  rm -rf "$RUN"
 }
 
 if [ "$ALL" = 1 ]; then
@@ -202,6 +273,8 @@ fi
 
 # ---- regenerate INDEX.md atomically (a view — never hand-edited) ----
 if lock "$ROOT/INDEX.md"; then
+  # half-written index files of passes that were killed mid-write (pre-3.6 hook timeouts)
+  find "$ROOT" -maxdepth 1 -type f -name '.index.*' -mmin +60 -delete 2>/dev/null
   TMP=$(mktemp "$ROOT/.index.XXXXXX" 2>/dev/null || echo "$ROOT/.index.$$")
   {
     echo "# bro index"

@@ -1,13 +1,27 @@
 #!/bin/bash
-# bro v3.3 — SessionStart hook (matchers: startup, resume, compact, clear).
+# bro v3.6 — SessionStart hook (matchers: startup, resume, compact, clear).
 # Injects the read-order (principles, workspace summary, REGISTERS, journals),
 # self-heals a missing store version stamp, flags legacy v2 logs in cwd,
 # and teaches the journal/marker format so every chat can write typed records.
 # Workspace resolution walks UP from cwd (config map first, then dir slugs),
 # so sessions started in project subfolders still find their workspace.
 # Silent when bro is not enabled for the project or /bro off is set for the chat.
+#
+# v3.6: this hook does NOTHING slow. Harvest used to run here, before the
+# context was emitted; once a workspace grew (30 s of harvest against a 10 s
+# hook timeout) the harness cancelled the hook and discarded its output — every
+# session started blind, silently. Harvest now lives in its own async hook
+# (bro-harvest-hook.sh). This hook also leaves a start mark
+# (~/.claude/bro/started/<session_id>: "pending" on entry, "ok" once the context
+# is out; bro-precompact.sh sets it back to "pending" before each compaction) so
+# the stop hook can notice a start that never finished and recover it. Not
+# covered: a resume where this hook is never launched at all — the old "ok" stays.
+# --context-only: print the context as plain text and touch nothing (the stop
+# hook's recovery path).
 
 set -uo pipefail
+
+CONTEXT_ONLY=0; [ "${1:-}" = "--context-only" ] && CONTEXT_ONLY=1
 
 command -v jq >/dev/null 2>&1 && HAS_JQ=1 || HAS_JQ=0
 CONFIG="$HOME/.claude/bro-config.json"
@@ -29,6 +43,7 @@ jget() { # $1 = key
 }
 CWD=$(jget cwd); [ -z "$CWD" ] && CWD=$(pwd)
 SID=$(jget session_id)
+case "$SID" in *[!A-Za-z0-9_-]*) SID="" ;; esac   # it becomes a file name below — ids are uuids, nothing else passes
 [ -n "$SID" ] && [ -f "$HOME/.claude/bro/off/$SID" ] && exit 0
 
 slug_of() { basename "$1" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-._'; }
@@ -56,17 +71,33 @@ fi
 WS_DIR="$ROOT/$WS"
 [ -d "$WS_DIR" ] || exit 0
 
+# start mark: "pending" now, "ok" right before the context goes out. A mark left
+# at "pending" means this hook died on the way — the stop hook recovers from it.
+MARK_DIR="$HOME/.claude/bro/started"
+MARK=""
+if [ "$CONTEXT_ONLY" = 0 ] && [ -n "$SID" ]; then
+  mkdir -p "$MARK_DIR" 2>/dev/null
+  MARK="$MARK_DIR/$SID"
+  echo pending > "$MARK" 2>/dev/null
+  find "$MARK_DIR" -type f -mtime +180 -delete 2>/dev/null   # far beyond the life of any chat process
+fi
+
 # version: self-heal an organic (never-migrated) store, then compare
 SKILL_MAJOR=$(cut -d. -f1 "$HOME/.claude/bro/VERSION" 2>/dev/null || echo 3)
-[ -f "$ROOT/.version" ] || echo "$SKILL_MAJOR" > "$ROOT/.version" 2>/dev/null
+if [ "$CONTEXT_ONLY" = 0 ]; then
+  [ -f "$ROOT/.version" ] || echo "$SKILL_MAJOR" > "$ROOT/.version" 2>/dev/null
+fi
 STORE_MAJOR=$(cat "$ROOT/.version" 2>/dev/null || echo 0)
 
 emit() { # $1 = context string
-  if [ "$HAS_JQ" = 1 ]; then
-    jq -cn --arg ctx "$1" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}'
-  else
-    printf '%s\n' "$1"   # plain stdout is also injected as context for SessionStart
+  local OUT=""
+  if [ "$CONTEXT_ONLY" = 0 ] && [ "$HAS_JQ" = 1 ]; then
+    OUT=$(jq -cn --arg ctx "$1" '{hookSpecificOutput:{hookEventName:"SessionStart",additionalContext:$ctx}}' 2>/dev/null)
   fi
+  [ -n "$OUT" ] || OUT="$1"   # no jq, jq failed, or --context-only: plain stdout is injected as context too
+  # the mark turns "ok" only once the context is really out
+  printf '%s\n' "$OUT" && [ -n "$MARK" ] && echo ok > "$MARK" 2>/dev/null
+  return 0
 }
 
 if [ "$STORE_MAJOR" -lt "$SKILL_MAJOR" ] 2>/dev/null; then
@@ -74,8 +105,7 @@ if [ "$STORE_MAJOR" -lt "$SKILL_MAJOR" ] 2>/dev/null; then
   exit 0
 fi
 
-# harvest markers born since last session (idempotent, fast)
-[ -x "$HOME/.claude/bro/bin/bro-harvest.sh" ] && "$HOME/.claude/bro/bin/bro-harvest.sh" --root "$ROOT" --workspace "$WS" --quiet 2>/dev/null
+# (harvest is NOT run here any more — see bro-harvest-hook.sh, registered async)
 
 TODAY=$(date +%F)
 NOW=$(date '+%H:%M')

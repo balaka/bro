@@ -1,7 +1,9 @@
 #!/bin/bash
-# bro v3.3 — Stop hook (the turnstile).
+# bro v3.6 — Stop hook (the turnstile).
 # Blocks the end of a turn when today's journal for this workspace is stale
 # or missing, at most once per (session, prompt) — loop-proof by construction.
+# v3.6: also watches the session-start hook — a start that never finished is
+# recovered here and reported, instead of leaving the chat blind in silence.
 # Workspace resolution walks UP from cwd (config map, then dir slugs).
 # Works without jq (sed fallback for parsing; exit-2 fallback for blocking).
 
@@ -28,6 +30,7 @@ jget() {
 }
 CWD=$(jget cwd); [ -z "$CWD" ] && CWD=$(pwd)
 SID=$(jget session_id)
+case "$SID" in *[!A-Za-z0-9_-]*) SID="" ;; esac   # used as a file name below — ids are uuids, nothing else passes
 PROMPT_ID=$(jget prompt_id)
 [ -n "$SID" ] && [ -f "$HOME/.claude/bro/off/$SID" ] && exit 0
 
@@ -65,6 +68,60 @@ mkdir -p "$GUARD_DIR" 2>/dev/null
 find "$GUARD_DIR" -type f -mtime +1 -delete 2>/dev/null
 GUARD="$GUARD_DIR/${SID:-nosid}__${PROMPT_ID:-noprompt}"
 [ -f "$GUARD" ] && exit 0
+# the watchdogs below keep their own slot: a prompt can be blocked once by a watchdog
+# and once by the freshness check — never more, and neither can starve the other
+GUARD_W="${GUARD}__watch"
+
+block() { # $1 = reason; blocks this stop once and exits
+  if [ "$HAS_JQ" = 1 ]; then
+    # both contract generations: top-level decision/reason (classic) + continueLoop (current)
+    jq -cn --arg r "$1" '{decision:"block",reason:$r,hookSpecificOutput:{hookEventName:"Stop",continueLoop:true,additionalContext:$r}}'
+    exit 0
+  else
+    # no jq: exit 2 blocks the stop; stderr is fed back to the model
+    echo "$1" >&2
+    exit 2
+  fi
+}
+
+# v3.6 watchdog — the enforcer's enforcer. bro-session-start.sh leaves a mark per
+# session: "pending" on entry, "ok" once its context is out; bro-precompact.sh
+# sets it back to "pending" before every compaction. A mark still at "pending"
+# means the start hook died on the way (timeout, crash) or never ran after a
+# compaction, and this chat is working without principles and read-order.
+# Recover here: hand the chat the same context, log it, and have the operator
+# told — a dead start must never be silent, whatever else goes wrong below.
+MARK="$HOME/.claude/bro/started/$SID"
+if [ -n "$SID" ] && [ ! -f "$GUARD_W" ] && [ -f "$MARK" ] && [ "$(cat "$MARK" 2>/dev/null)" != "ok" ]; then
+  START="$(dirname "$0")/bro-session-start.sh"
+  [ -x "$START" ] || START="$HOME/.claude/bro/bin/bro-session-start.sh"
+  RECOVERED=$(printf '%s' "$INPUT" | "$START" --context-only 2>/dev/null)
+  [ -n "$RECOVERED" ] || RECOVERED="(the context could not be rebuilt either — read $ROOT/_principles.md and today's journal in $WS_DIR by hand, and run /bro status)"
+  touch "$GUARD_W" 2>/dev/null
+  echo ok > "$MARK" 2>/dev/null
+  HEALTH="$HOME/.claude/bro/health.log"
+  echo "$(date '+%F %H:%M')  session-start did not finish — context recovered by the stop hook  ws=$WS  session=${SID%%-*}" >> "$HEALTH" 2>/dev/null
+  [ "$(wc -l < "$HEALTH" 2>/dev/null | tr -d ' ')" -gt 400 ] 2>/dev/null && tail -n 200 "$HEALTH" > "$HEALTH.tmp" 2>/dev/null && mv "$HEALTH.tmp" "$HEALTH"
+  block "bro watchdog [NOW: $(date '+%F %H:%M (%A)')]: the session-start hook did not finish in this session (it timed out or crashed, or a compaction was cut short), so this chat has been working without bro context. Tell the operator in one line that bro's session start failed and was recovered by the stop hook (details: ~/.claude/bro/health.log). Then do what it would have asked — $RECOVERED"
+fi
+
+# …and the background harvest has a watcher too. Ten minutes after this session's
+# last start, a COMPLETED harvest pass must exist that began around or after that
+# start (any chat's pass counts — the stamp is per workspace). If not, the async
+# hook is not running here (chat opened before an update, hook not registered,
+# pass keeps failing): have this chat run the harvest itself and tell the operator.
+# Once per session.
+mtime_of() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+HWARNED="$MARK.harvest-warned"
+if [ -n "$SID" ] && [ ! -f "$GUARD_W" ] && [ -f "$MARK" ] && [ ! -f "$HWARNED" ]; then
+  M_AT=$(mtime_of "$MARK"); H_AT=$(mtime_of "$WS_DIR/.harvest-stamp")
+  if [ $(( $(date +%s) - M_AT )) -gt 600 ] && [ $(( H_AT + 60 )) -lt "$M_AT" ]; then
+    touch "$GUARD_W" 2>/dev/null
+    : > "$HWARNED" 2>/dev/null
+    echo "$(date '+%F %H:%M')  no completed harvest pass since this session started — chat asked to run it  ws=$WS  session=${SID%%-*}" >> "$HOME/.claude/bro/health.log" 2>/dev/null
+    block "bro watchdog [NOW: $(date '+%F %H:%M (%A)')]: no harvest pass has completed for workspace '$WS' since this chat started, so its registers (decisions.md, open.md, vocab.md, rule candidates) may be missing records. Run now with Bash: ~/.claude/bro/bin/bro-harvest.sh --workspace $WS — then tell the operator in one line that bro's background harvest is not running in this chat (a chat opened before a bro update needs to be reopened once; otherwise see ~/.claude/bro/health.log and /bro status), and finish your reply."
+  fi
+fi
 
 fresh=0
 if [ -f "$TODAY_FILE" ]; then
@@ -107,12 +164,4 @@ else
   REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: journal format issues in $TODAY_FILE —$LINT Fix them, then finish your reply."
 fi
 
-if [ "$HAS_JQ" = 1 ]; then
-  # both contract generations: top-level decision/reason (classic) + continueLoop (current)
-  jq -cn --arg r "$REASON" '{decision:"block",reason:$r,hookSpecificOutput:{hookEventName:"Stop",continueLoop:true,additionalContext:$r}}'
-  exit 0
-else
-  # no jq: exit 2 blocks the stop; stderr is fed back to the model
-  echo "$REASON" >&2
-  exit 2
-fi
+block "$REASON"
