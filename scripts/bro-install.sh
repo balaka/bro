@@ -33,8 +33,12 @@ echo "[bro-install] installing from $SRC_DIR (v$(cat "$SRC_DIR/VERSION"))"
 
 # 1. scripts + version stamp — atomic per file (cp to tmp + mv), so hooks
 # executing concurrently never read a half-written script
+# bro-lib.sh first, and named explicitly (not just "whatever's in scripts/"):
+# it's a sourced dependency of bro-harvest.sh (and, from here on, other
+# scripts), not a standalone entry point — every consumer expects to find it
+# next to itself in this same $BIN_DIR.
 mkdir -p "$BIN_DIR"
-for f in "$SRC_DIR"/scripts/hooks/*.sh "$SRC_DIR/scripts/bro-migrate.sh" "$SRC_DIR/scripts/bro-harvest.sh"; do
+for f in "$SRC_DIR/scripts/bro-lib.sh" "$SRC_DIR"/scripts/hooks/*.sh "$SRC_DIR/scripts/bro-migrate.sh" "$SRC_DIR/scripts/bro-harvest.sh" "$SRC_DIR/scripts/bro-append.sh"; do
   b=$(basename "$f")
   cp "$f" "$BIN_DIR/.$b.new" && chmod +x "$BIN_DIR/.$b.new" && mv "$BIN_DIR/.$b.new" "$BIN_DIR/$b"
 done
@@ -90,7 +94,7 @@ jq --arg bin "$BIN_DIR" '
                statusMessage:"bro: checking journal freshness"}]}
     ])
   | .hooks.PreToolUse = ((.hooks.PreToolUse | scrub) + [
-      {matcher:"Write|Edit", hooks:[{type:"command", command:($bin+"/bro-write-guard.sh"), timeout:10}]}
+      {matcher:"Write|Edit|Bash", hooks:[{type:"command", command:($bin+"/bro-write-guard.sh"), timeout:10}]}
     ])
   | .hooks.PreCompact = ((.hooks.PreCompact | scrub) + [
       {hooks:[{type:"command", command:($bin+"/bro-precompact.sh"), timeout:5}]}
@@ -101,7 +105,7 @@ echo "[bro-install] done:"
 echo "  skill    → $SKILL_DIR/SKILL.md"
 echo "  scripts  → $BIN_DIR/"
 echo "  config   → $CONFIG"
-echo "  hooks    → $SETTINGS (SessionStart ×4: context + async harvest, Stop, PreToolUse Write|Edit, PreCompact)"
+echo "  hooks    → $SETTINGS (SessionStart ×4: context + async harvest, Stop, PreToolUse Write|Edit|Bash, PreCompact)"
 echo ""
 echo "Open a new session (hooks load on start). If you have v1/v2 bro folders,"
 echo "the session-start hook will flag them — run /bro migrate when it does."

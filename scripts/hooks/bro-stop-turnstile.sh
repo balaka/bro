@@ -6,8 +6,37 @@
 # recovered here and reported, instead of leaving the chat blind in silence.
 # Workspace resolution walks UP from cwd (config map, then dir slugs).
 # Works without jq (sed fallback for parsing; exit-2 fallback for blocking).
+#
+# v3.7 — hash-gated form lint (§5 of the v3.7 plan). Before this, the lint
+# below scanned the WHOLE journal every Stop, so one chat's bad content (or
+# stale pre-upgrade content) blocked every OTHER chat's unrelated turn too.
+# Now every range bro-append.sh already validated and logged to
+# <ws>/.append-log is skipped by the per-occurrence checks (section-header
+# format, future-time, colonless marker) as long as its bytes still match
+# the hash logged at write time — a hand-edit or historical content changes
+# the hash and still gets full scrutiny. This is a content-hash backstop,
+# not a session/trust claim: it cannot be spoofed by claiming "some session
+# already wrote this," only by matching the exact bytes that were validated.
 
 set -uo pipefail
+
+# bro-lib.sh for hash_range() (the hash-gated lint below) and MRE_NOCOLON
+# (the colonless-marker lint, shared with bro-append.sh's pre-write
+# validator — see bro-lib.sh's own header for why this is centralized).
+# Missing lib degrades (hash-gating off, a locally-duplicated regex takes
+# over) rather than disabling the whole turnstile — the freshness check
+# below doesn't need bro-lib.sh at all, and losing it silently over one
+# missing file would be a much worse failure than a noisier lint.
+HAS_LIB=1
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+if [ -n "$LIB_DIR" ] && [ -f "$LIB_DIR/bro-lib.sh" ]; then
+  . "$LIB_DIR/bro-lib.sh"
+else
+  HAS_LIB=0
+  MRE_NOCOLON='^[[:space:]]*([*][*])?(DECIDED|RULE|TAIL|TERM|REJECTED|CLOSED|РЕШЕНИЕ|ПРАВИЛО|ХВОСТ|ТЕРМИН|ОТКАЗ|ЗАКРЫТ)([*][*])?[[:space:]][^:]*$'
+  mkdir -p "$HOME/.claude/bro" 2>/dev/null
+  echo "$(date '+%F %H:%M')  bro-stop-turnstile: bro-lib.sh not found next to $0 — hash-gated lint disabled, running degraded" >> "$HOME/.claude/bro/health.log" 2>/dev/null
+fi
 
 command -v jq >/dev/null 2>&1 && HAS_JQ=1 || HAS_JQ=0
 CONFIG="$HOME/.claude/bro-config.json"
@@ -129,24 +158,71 @@ if [ -f "$TODAY_FILE" ]; then
   [ "$AGE_MIN" -lt "$STALE_MIN" ] && fresh=1
 fi
 
+# v3.7 (§5) — hash-gated trusted ranges. <ws>/.append-log has one line per
+# bro-append.sh write: date/time, session, journal basename, line range,
+# sha256 of that range (hash_range(), from bro-lib.sh — same function both
+# sides use, so a re-hash here can only agree with the logged one if the
+# bytes are truly unchanged). A range only stays trusted while its CURRENT
+# bytes still match; a hand-edit or historical pre-upgrade content changes
+# the hash and falls back into full scrutiny below, same as before this
+# version. Built once per Stop call, from EVERY session's log entries (not
+# just this chat's) — trust is a property of the bytes, not of who wrote them.
+TRUSTED_LINES=""
+if [ "$HAS_LIB" = 1 ] && [ -f "$WS_DIR/.append-log" ] && [ -f "$TODAY_FILE" ]; then
+  TB=$(basename "$TODAY_FILE")
+  while IFS=$'\t' read -r _ _ LOGF RANGE LOGHASH; do
+    [ "$LOGF" = "$TB" ] || continue
+    FROM="${RANGE%-*}"; TO="${RANGE#*-}"
+    case "$FROM" in ''|*[!0-9]*) continue ;; esac
+    case "$TO" in ''|*[!0-9]*) continue ;; esac
+    [ "$(hash_range "$TODAY_FILE" "$FROM" "$TO")" = "$LOGHASH" ] && TRUSTED_LINES="$TRUSTED_LINES $FROM-$TO"
+  done < "$WS_DIR/.append-log" 2>/dev/null
+fi
+
 LINT=""
 if [ -f "$TODAY_FILE" ]; then
+  # existence checks run on the real file, unfiltered — they ask "is there a
+  # well-formed header/section anywhere", not "does every occurrence pass",
+  # so trust status doesn't change their answer (trusted content, by
+  # construction, already has a well-formed header — see bro-append.sh).
   head -1 "$TODAY_FILE" | grep -qE "^# bro — [0-9]{4}-[0-9]{2}-[0-9]{2}" \
     || LINT="$LINT Header must be '# bro — YYYY-MM-DD / <workspace>'."
   grep -qE "^## " "$TODAY_FILE" \
     || LINT="$LINT At least one '## HH:MM · <thread> — <topic>' section is required."
+
+  # per-occurrence checks (section-header format, future-time, colonless
+  # marker) run against SCAN_FILE, where every trusted line is blanked —
+  # same line numbers, so nothing shifts, but a trusted line can no longer
+  # match any of these patterns and add to a count. An untrusted line (hand-
+  # edit, historical content, anything that bypassed bro-append.sh) is
+  # identical in SCAN_FILE to the real file and gets full scrutiny.
+  SCAN_FILE="$TODAY_FILE"
+  if [ -n "$TRUSTED_LINES" ]; then
+    SCAN_FILE=$(mktemp "${TMPDIR:-/tmp}/bro-scan.XXXXXX" 2>/dev/null) || SCAN_FILE="$TODAY_FILE"
+    if [ "$SCAN_FILE" != "$TODAY_FILE" ]; then
+      awk -v trusted="$TRUSTED_LINES" '
+        BEGIN { n = split(trusted, ranges, " ")
+                for (i = 1; i <= n; i++) { split(ranges[i], b, "-"); for (j = b[1]; j <= b[2]; j++) T[j] = 1 } }
+        { print (NR in T) ? "" : $0 }
+      ' "$TODAY_FILE" > "$SCAN_FILE" 2>/dev/null
+    fi
+  fi
+
   # canonical section headers: '## HH:MM · <thread> — <topic>'
-  BADHDR=$(grep -cE '^## ' "$TODAY_FILE" 2>/dev/null || true); GOODHDR=$(grep -cE '^## [0-9]{2}:[0-9]{2} · .+ — ' "$TODAY_FILE" 2>/dev/null || true)
+  BADHDR=$(grep -cE '^## ' "$SCAN_FILE" 2>/dev/null || true); GOODHDR=$(grep -cE '^## [0-9]{2}:[0-9]{2} · .+ — ' "$SCAN_FILE" 2>/dev/null || true)
   [ -n "$BADHDR" ] || BADHDR=0; [ -n "$GOODHDR" ] || GOODHDR=0
   [ "$BADHDR" -gt "$GOODHDR" ] 2>/dev/null \
     && LINT="$LINT $((BADHDR-GOODHDR)) section header(s) off-format — must be '## HH:MM · <thread> — <topic>'."
   # future-time headers: the time was invented, not taken from date
-  FUT=$(grep -oE '^## [0-9]{2}:[0-9]{2}' "$TODAY_FILE" 2>/dev/null | awk -v nh="$(date +%H)" -v nm="$(date +%M)" '{hh=substr($0,4,2)+0; mm=substr($0,7,2)+0; if (hh*60+mm > nh*60+nm+3) {print substr($0,4); exit}}')
+  FUT=$(grep -oE '^## [0-9]{2}:[0-9]{2}' "$SCAN_FILE" 2>/dev/null | awk -v nh="$(date +%H)" -v nm="$(date +%M)" '{hh=substr($0,4,2)+0; mm=substr($0,7,2)+0; if (hh*60+mm > nh*60+nm+3) {print substr($0,4); exit}}')
   [ -n "$FUT" ] && LINT="$LINT Section time $FUT is in the FUTURE (now $(date +%H:%M)) — take time from date, fix the header."
   # marker-like lines missing the colon are silently lost to harvest
-  SUS=$(grep -cE '^[[:space:]]*(\*\*)?(DECIDED|RULE|TAIL|TERM|REJECTED|РЕШЕНИЕ|ПРАВИЛО|ХВОСТ|ТЕРМИН|ОТКАЗ)(\*\*)?[[:space:]][^:]*$' "$TODAY_FILE" 2>/dev/null || true)
+  # v3.7: CLOSED/ЗАКРЫТ (§1) added alongside the other five keywords;
+  # MRE_NOCOLON now comes from bro-lib.sh (or its degraded fallback above).
+  SUS=$(grep -cE "$MRE_NOCOLON" "$SCAN_FILE" 2>/dev/null || true)
   [ -n "$SUS" ] || SUS=0
   [ "$SUS" -gt 0 ] 2>/dev/null && LINT="$LINT $SUS marker-like line(s) without ':' — harvest will skip them; write 'KEYWORD: text' or reword."
+  [ "$SCAN_FILE" != "$TODAY_FILE" ] && rm -f "$SCAN_FILE" 2>/dev/null
 fi
 
 if [ "$fresh" = 1 ] && [ -z "$LINT" ]; then
@@ -156,12 +232,13 @@ fi
 touch "$GUARD" 2>/dev/null
 
 NOWSTAMP="$(date '+%F %H:%M (%A)')"
+APPENDHOW="Bash: \`~/.claude/bro/bin/bro-append.sh --workspace $WS --thread '<work thread>' --topic '<topic with a distinguishing detail>'\` with the section body on stdin (markers DECIDED:/REJECTED:/RULE:/TAIL:/TERM:/CLOSED:, RU aliases РЕШЕНИЕ:/ОТКАЗ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:/ЗАКРЫТ:) — never Write/Edit $TODAY_FILE directly, the write guard denies it"
 if [ ! -f "$TODAY_FILE" ]; then
-  REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: no journal for today. Create $TODAY_FILE (format: '# bro — $(date +%F) / $WS' + '## HH:MM · <thread> — <topic>' section; markers DECIDED:/REJECTED:/RULE:/TAIL:/TERM:, RU aliases РЕШЕНИЕ:/ОТКАЗ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:) and log this session's substance, then finish your reply."
+  REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: no journal for today. It's created automatically on the first append — log this session's substance now via $APPENDHOW, then finish your reply."
 elif [ "$fresh" = 0 ]; then
-  REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: journal $TODAY_FILE is ${AGE_MIN}min stale (threshold ${STALE_MIN}min). Append a '## HH:MM · <thread> — <topic>' section covering what happened since the last entry, then finish your reply.${LINT:+ Also fix:$LINT}"
+  REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: journal $TODAY_FILE is ${AGE_MIN}min stale (threshold ${STALE_MIN}min). Append a section covering what happened since the last entry via $APPENDHOW, then finish your reply.${LINT:+ Also fix:$LINT}"
 else
-  REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: journal format issues in $TODAY_FILE —$LINT Fix them, then finish your reply."
+  REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: journal format issues in $TODAY_FILE (outside anything bro-append.sh already validated) —$LINT The write guard denies a direct Write/Edit on this file, so these lines can't be patched in place from this chat — if you just wrote them, undo isn't available either; append a corrected line instead via $APPENDHOW. If this is pre-existing content from before this chat, tell the operator it needs a hand-fix (only they can edit the journal directly) and finish your reply."
 fi
 
 block "$REASON"

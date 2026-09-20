@@ -75,6 +75,28 @@ What to expect after 3.5 → 3.6:
 - Migrating a v1/v2 storage into a store that is already on 3.6 needs nothing
   extra: migrated journals get fresh file dates, so the next pass reads them.
 
+What to expect after 3.6 → 3.7:
+
+- The write guard's matcher widens from `Write|Edit` to `Write|Edit|Bash`. A
+  chat that was already open when the update runs keeps its old, narrower
+  guard (and can still Write/Edit the shared daily journal directly) until
+  it is reopened — same rule as always: hook registrations are read at
+  session start. Once reopened, a direct Write/Edit on `<ws>/YYYY-MM-DD.md`
+  (or an obvious Bash redirect/`tee`/`sed -i` into it) is denied and
+  redirected to `~/.claude/bro/bin/bro-append.sh`, the new sole write path —
+  the denial message itself carries the exact command to run, so a chat
+  holding stale skill text in context does not need to re-read anything to
+  recover.
+- Closing a `TAIL:`/`ХВОСТ:` item is no longer a hand-edit of `open.md`: a
+  `CLOSED:`/`ЗАКРЫТ:` marker naming the tail's own id closes it through
+  harvest instead. Nothing in `open.md` changes shape or moves — an item
+  left `[x]` from before the update is unaffected either way.
+- Harvest's marker parser no longer folds the paragraph after a marker into
+  its body when the blank line was forgotten; ids are computed the same way
+  as before the update, so re-harvesting an old journal (`--full`, or an
+  incremental pass widened by an edited prefix) does not duplicate anything
+  already in a register.
+
 ## After migration
 
 - Old chats can be reopened safely: the write-guard hook denies writes to

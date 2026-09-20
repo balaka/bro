@@ -126,7 +126,7 @@ N=$((N+1))
 [ -n "$YESTERDAY" ] && RO="$RO $N) $WS_DIR/$YESTERDAY (previous day)"
 
 CTX="bro v$SKILL_FULL active for workspace '$WS'. NOW: $TODAY $NOW ($DOW) — this is the time source; your inner sense of time is stale after any pause, so take timestamps and greetings from here or from date, never from feeling. Read now, in order:$RO."
-CTX="$CTX Journal format: append '## HH:MM · <work thread> — <topic with a distinguishing detail>' sections (HH:MM from date); mark typed records on their own lines: DECIDED: / REJECTED: / RULE: / TAIL: / TERM: (RU: РЕШЕНИЕ:/ОТКАЗ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:) — harvest moves them into the registers automatically. Keep the journal current — the stop hook enforces freshness."
+CTX="$CTX Journal format: a section is '## HH:MM · <work thread> — <topic with a distinguishing detail>' (HH:MM from date) followed by free text and typed markers on their own lines: DECIDED: / REJECTED: / RULE: / TAIL: / TERM: (RU: РЕШЕНИЕ:/ОТКАЗ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:) — harvest moves them into the registers automatically. Close a TAIL with CLOSED <its exact id from open.md>: <what closed it> (RU: ЗАКРЫТ <id>: ...) — no colon between the keyword and the id, harvest only reads the text before the FIRST colon as keyword+id; never hand-edit open.md; an id harvest can't find open is logged as a CLOSE-MISS, not silently lost. NEVER Write/Edit the journal file directly any more (the write guard denies it) — add a section with Bash: printf '%s\n' 'body text — one or more marker lines allowed' | ~/.claude/bro/bin/bro-append.sh --workspace $WS --thread '<work thread>' --topic '<topic>' — it stamps HH:MM from the real clock itself, validates the body before writing, and appends atomically under a lock. Keep the journal current — the stop hook enforces freshness."
 if [ -f "$CONFIG" ] && [ "$HAS_JQ" = 1 ] && ! jq empty "$CONFIG" 2>/dev/null; then
   CTX="$CTX WARNING: ~/.claude/bro-config.json is broken JSON — bro is running on defaults; tell the user."
 fi
@@ -134,6 +134,12 @@ fi
 cnt() { local c; c=$(grep -c "$1" "$2" 2>/dev/null || true); [ -n "$c" ] || c=0; printf '%s' "$c" | head -1; }
 NOPEN=$(cnt '^- \[ \]' "$WS_DIR/open.md")
 [ "$NOPEN" -gt 0 ] 2>/dev/null && CTX="$CTX Open items: $NOPEN unchecked."
+# v3.7 (§1): a CLOSED:/ЗАКРЫТ: marker naming an id not open in this
+# workspace's open.md is logged, not dropped — surface the count every
+# session so it's never only visible by opening the log file by hand.
+NMISS=0
+[ -f "$WS_DIR/.close-misses.log" ] && NMISS=$(wc -l < "$WS_DIR/.close-misses.log" | tr -d ' ')
+[ "$NMISS" -gt 0 ] 2>/dev/null && CTX="$CTX CLOSE-MISS: $NMISS CLOSED:/ЗАКРЫТ: marker(s) named a tail id not found open in open.md — see $WS_DIR/.close-misses.log."
 NRULE=$(cnt '^- \[ \]' "$ROOT/_rule-candidates.md")
 [ "$NRULE" -gt 0 ] 2>/dev/null && CTX="$CTX Rule candidates pending operator confirmation: $NRULE in $ROOT/_rule-candidates.md."
 # review cadence: queue >= 10 OR 7+ days since last review with a non-empty queue

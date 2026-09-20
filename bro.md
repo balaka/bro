@@ -1,7 +1,7 @@
 ---
 name: bro
-version: 3.6.0
-description: Session continuity journal with hook enforcement. One central store (~/bro) — global principles, one summary and shared daily journals per workspace, an INDEX over everything. Hooks inject read-order at session start, enforce journal freshness at stop, and guard legacy paths. Use /bro to capture now; also status, setup, off/on per chat, migrate, update.
+version: 3.7.0
+description: Session continuity journal with hook enforcement. One central store (~/bro) — global principles, one summary and shared daily journals per workspace, an INDEX over everything. Hooks inject read-order at session start, enforce journal freshness at stop, and guard legacy paths and the journal's own write path (bro-append.sh is the sole way in). Use /bro to capture now; also status, setup, off/on per chat, migrate, update.
 ---
 
 # bro v3 — enforced session journal
@@ -19,7 +19,7 @@ bro captures the middle layer of state that formal artifacts don't: operator sta
   <workspace>/              ← one folder per project; name = lowercased basename of repo dir
     _workspace.md           ← what this is + people + pointers (thin; registers hold the rest)
     decisions.md            ← decision register (harvested from DECIDED: markers, ADR-style)
-    open.md                 ← open-items register (harvested from TAIL: markers; close by hand)
+    open.md                 ← open-items register (harvested from TAIL: markers; closed by a CLOSED:/ЗАКРЫТ: marker, never by hand)
     vocab.md                ← vocabulary register (harvested from TERM: markers)
     2026-09-06.md           ← daily journal — ALL chats of the day write here, in sections
     _legacy-v2/             ← preserved v2 thread summaries (read-only history)
@@ -55,8 +55,9 @@ Enablement is per-project (a workspace in the store), but any single chat can op
    - **No** → journal free text (states, events, the story of the day).
    - **Yes, project-scoped** → a typed MARKER in the journal: `DECIDED:` / `TAIL:` / `TERM:` — harvest moves it to the register.
    - **Yes, universal** → a `RULE:` marker (lands in the candidates queue); confirm with the operator before it enters `_principles.md` (max one batched ask per capture).
-4. Append to `~/bro/<ws>/YYYY-MM-DD.md` (create from the format below if missing). Use Edit/Write; never rewrite earlier sections of the day.
-5. Run `~/.claude/bro/bin/bro-harvest.sh --workspace <ws> --quiet` with Bash (also regenerates INDEX.md). Check `open.md` — close items the session resolved.
+   - **A TAIL just got resolved** → a `CLOSED:` marker naming its exact id (never a hand-edit of `open.md`).
+4. Append to `~/bro/<ws>/YYYY-MM-DD.md` through the script, not Edit/Write (see **Appending — bro-append.sh** below; the write guard denies a direct Write/Edit or a Bash redirect into it).
+5. Run `~/.claude/bro/bin/bro-harvest.sh --workspace <ws> --quiet` with Bash (also regenerates INDEX.md). Check `open.md` — close items the session resolved with a `CLOSED:` marker (see below), never a hand-edit.
 6. Report in one line what was written and where.
 
 ## Journal format (daily file)
@@ -72,14 +73,15 @@ REJECTED: <what was turned down, in the operator's words; nothing chosen instead
 RULE: <new operator instruction, verbatim>
 TAIL: <open item carried forward>
 TERM: <term> — <meaning, in the operator's words>
+CLOSED t-71bd06: <what closed it — id must be the exact one already on that line in open.md>
 ```
 
 Rules:
 - Section time HH:MM comes from the date command — never from your sense of time (the hook hands you NOW at session start; after any pause it is the only truth).
 - Header line 1 exactly `# bro — YYYY-MM-DD / <workspace>` (the lint checks it).
 - One section per sitting; append, don't rewrite. The section header carries an ANCHOR: time · work thread — topic with a detail that distinguishes it («выключатель /bro off», not «доработки»). A cold reader a year later must place the section without any context.
-- Markers at line start, single line each: `DECIDED:` / `REJECTED:` / `RULE:` / `TAIL:` / `TERM:`. Russian aliases equally valid: `РЕШЕНИЕ:` / `ОТКАЗ:` / `ПРАВИЛО:` / `ХВОСТ:` / `ТЕРМИН:`. An explicit id after the keyword (`DECIDED d-0906-1:`) is optional — harvest assigns a stable hash id when absent.
-- Markers are SEEDS, not final records: the harvest script moves them into the registers (decisions.md / open.md / vocab.md / _rule-candidates.md). Never hand-edit registers to add records — write a marker in the journal instead; hand-edit registers only to change status (close an item, supersede a decision, accept a rule).
+- Markers at line start, single line each: `DECIDED:` / `REJECTED:` / `RULE:` / `TAIL:` / `TERM:` / `CLOSED:`. Russian aliases equally valid: `РЕШЕНИЕ:` / `ОТКАЗ:` / `ПРАВИЛО:` / `ХВОСТ:` / `ТЕРМИН:` / `ЗАКРЫТ:`. An explicit id after the keyword (`DECIDED d-0906-1:`) is optional for the first five — harvest assigns a stable hash id when absent. `CLOSED`'s id is NOT optional: it must be the target tail's own id exactly as printed in `open.md` (`CLOSED t-71bd06: <what closed it>`) — nothing can guess which tail is meant, and a missing or wrong id becomes a CLOSE-MISS instead of closing anything.
+- Markers are SEEDS, not final records: the harvest script moves them into the registers (decisions.md / open.md / vocab.md / _rule-candidates.md). Never hand-edit registers to add records — write a marker in the journal instead; hand-edit registers only to change status (supersede a decision, accept a rule). Closing a tail is also not a hand-edit any more — write a `CLOSED:`/`ЗАКРЫТ:` marker; harvest flips the checkbox.
 - **Operator state is journal material.** Mood, energy, life context the operator shares — record it plainly, in their own words. It is often the most valuable line for whoever resumes tomorrow.
 - Bilingual: write in the language the exchange happened in; verbatim quotes never translated; code/paths/URLs in backticks as-is.
 - Never trim or summarize existing entries. The journal is append-only history.
@@ -88,12 +90,30 @@ Rules:
 - **A promise becomes a TAIL the moment it is spoken** (§38) — deadlines, callbacks, "I'll check" — not at session end from memory.
 - **Side work is logged like main work** (§39) — especially anything touching security or irreversibly changing data.
 
+## Appending — `bro-append.sh` (the sole write path)
+
+A daily journal is shared by every parallel chat in a workspace; a direct Write/Edit (or a Bash redirect/`tee`/`sed -i`) into `~/bro/<ws>/YYYY-MM-DD.md` is denied by the write guard and pointed here instead. Use Bash:
+
+```
+printf '%s\n' 'DECIDED: chose X | over: Y | because: Z' | ~/.claude/bro/bin/bro-append.sh --workspace <ws> --thread '<work thread>' --topic '<topic with a distinguishing detail>'
+```
+
+(or a heredoc — `<<'EOF' ... EOF` — for a multi-line body; `--workspace` can be omitted when cwd resolves to one workspace, the same walk the hooks use). It:
+
+- stamps `HH:MM`/the date from the real clock itself — there is no time/date argument, so an invented section time is not merely checked for, it cannot be typed in the first place;
+- validates the body before writing a single byte: a stray `## ` line (would be misread as a new section) or a marker keyword missing its colon (invisible to harvest) rejects the whole call with a precise, line-numbered error, nothing touched;
+- auto-inserts the blank line after a marker line if the body didn't already have one, so a marker can never glue to the paragraph that follows it;
+- creates today's file with the canonical header (`# bro — YYYY-MM-DD / <workspace>`) the first time it's needed;
+- appends atomically under a lock (`bro-lib.sh`'s `lock()`) — parallel chats queue, never interleave or overwrite each other's section;
+- logs the line range it wrote plus a sha256 of those bytes to `<ws>/.append-log` — the stop hook's lint reads this to skip re-scrutinizing content it already validated (a hand-edit or historical content, whose hash won't match, still gets full scrutiny);
+- prints one confirmation line on success.
+
 ## Registers and harvest
 
-`bro-harvest.sh` (run automatically at every session start for the current workspace — by its own background hook, so it can never delay or cancel the context injection; `/bro harvest` runs it over all workspaces) collects markers from journals into registers. It is idempotent (stable ids, append-only) and never closes or edits existing records. It is incremental: a pass reads only journals changed since the last completed pass, and in them only the lines added since then; if already-harvested lines were edited, that journal is re-read whole. A record is taken as it stands the first time it is seen — so end every marker with a blank line: text glued onto it by a later write is ignored. `--full` re-reads everything (use after restoring journals with old file dates, or after hand-removing records from a register).
+`bro-harvest.sh` (run automatically at every session start for the current workspace — by its own background hook, so it can never delay or cancel the context injection; `/bro harvest` runs it over all workspaces) collects markers from journals into registers. It is idempotent (stable ids, append-only) and never closes or edits existing records. It is incremental: a pass reads only journals changed since the last completed pass, and in them only the lines added since then; if already-harvested lines were edited, that journal is re-read whole. A record is taken as it stands the first time it is seen — a marker's harvested body is exactly its own physical line; `bro-append.sh` auto-inserts the blank line after it so nothing from a later paragraph ever glues on (a hand-edited marker without one just drops the adjacent text instead of gluing it in — logged passively to `~/.claude/bro/health.log`, never a block). `--full` re-reads everything (use after restoring journals with old file dates, or after hand-removing records from a register).
 
 - `decisions.md` — one `### <id> (date) [active]` block per decision; rejections land here too as `[rejected]` (id prefix o-), with the journal section it was born in. To retire a decision, change `[active]` to `[superseded by <id>]` — never delete.
-- `open.md` — checklist. Close by hand: `- [x] … — закрыт YYYY-MM-DD: <чем>`. The session-start hook reports the count of unchecked items — review them against the day's work; close what got done.
+- `open.md` — checklist. Close via a `CLOSED:`/`ЗАКРЫТ:` journal marker, never a hand-edit: `CLOSED <id>: <чем>` (id = the tail's own id, exactly as printed on its `open.md` line). Harvest flips that one line to `- [x] … — закрыт YYYY-MM-DD: <чем>` under lock, and it's idempotent — an already-`[x]` id, or the same `CLOSED:` seen again on a `--full` re-read, is a no-op, never a double-close. An id harvest can't find open in this workspace's `open.md` (wrong id, typo, already closed under a different id) is a CLOSE-MISS: logged to `<ws>/.close-misses.log` (deduped, so a `--full` pass never re-logs it) and its count surfaced at the next session start — check it, it's the only place a bad `CLOSED:` shows up. The session-start hook also reports the count of unchecked items — review them against the day's work; close what got done with a `CLOSED:` marker.
 - `vocab.md` — terms in the operator's words with birth dates.
 - `_rule-candidates.md` (global) — every `RULE:` lands here. Review cadence is enforced: when the queue reaches 10 or 7 days pass since the last review, the session-start hook demands a batched review; after it, stamp `date +%F > ~/bro/.last-rule-review`. On capture or `/bro status`, surface pending candidates to the operator; on confirmation, write the rule into `_principles.md` (category + anchors form) and mark `[x] принят`; on rejection mark `[-] отклонён`. Never move a rule into principles without the operator's word.
 
@@ -161,8 +181,8 @@ Migration is a **deterministic script** — never improvise it by hand:
 | bro-session-start.sh | SessionStart (startup/resume/compact/clear) | Injects read-order for the workspace; flags storage-version mismatch → `/bro migrate`. Does nothing slow; leaves a start mark (`~/.claude/bro/started/<session_id>`) for the stop hook |
 | bro-harvest-hook.sh | SessionStart, `async` | Harvests the workspace's markers in the background — never in the way of the injection |
 | bro-precompact.sh | PreCompact | Sets the session's start mark back to `pending`, so the injection that must follow every compaction is checked by the watchdog, not assumed |
-| bro-stop-turnstile.sh | Stop | Blocks end of turn once per prompt when today's journal is missing/stale (> `staleMinutes`, default 30) or fails lint; the model writes the entry and finishes. Watchdog, two checks: (1) if the session-start hook never finished in this session (or after a compaction), hands the chat the same context, logs it to `~/.claude/bro/health.log` and has the operator told; (2) if ten minutes after the session's start no harvest pass has completed for the workspace, has the chat run the harvest itself and tell the operator (typical cause: a chat opened before a bro update) |
-| bro-write-guard.sh | PreToolUse (Write\|Edit) | Denies writes to retired v2 storage paths (`bro/` inside repos), pointing to the central store |
+| bro-stop-turnstile.sh | Stop | Blocks end of turn once per prompt when today's journal is missing/stale (> `staleMinutes`, default 30) or fails lint; the model writes the entry and finishes. Lint is hash-gated (§5): a range `bro-append.sh` already validated and logged to `.append-log` is skipped as long as its bytes still match the logged hash — a hand-edit or historical content still gets full scrutiny. Watchdog, two checks: (1) if the session-start hook never finished in this session (or after a compaction), hands the chat the same context, logs it to `~/.claude/bro/health.log` and has the operator told; (2) if ten minutes after the session's start no harvest pass has completed for the workspace, has the chat run the harvest itself and tell the operator (typical cause: a chat opened before a bro update) |
+| bro-write-guard.sh | PreToolUse (Write\|Edit\|Bash) | Denies writes to retired v2 storage paths (`bro/` inside repos, pointing to the central store), and — new in v3.7 — a direct Write/Edit or an obvious Bash redirect/`tee`/`sed -i` into a shared daily journal (`<ws>/YYYY-MM-DD.md`), pointing to `bro-append.sh` instead. Registers, `_workspace.md` and files outside the store are untouched; the Bash check is a narrow, best-effort nudge (documented in the script), not the safety net — the stop hook's hash-gated lint is |
 
 Config `~/.claude/bro-config.json`: `root` (store path), `staleMinutes` (turnstile threshold), `workspaces` (cwd→name overrides). All operator-tunable.
 
