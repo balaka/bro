@@ -1163,6 +1163,81 @@ assert_contains "§8 STATE no-time: passive counter reports the skip" "$(cat "$S
 assert_contains "§8 STATE no-time: health.log records it too" "$(cat "$HOME/.claude/bro/health.log" 2>/dev/null)" "STATE marker(s) skipped"
 
 # ===========================================================================
+# 15. v3.8.1 — glued-duplicate COLLISION fix (coordinator, real incident)
+# ===========================================================================
+echo "-- 15. glued-duplicate COLLISION fix (v3.8.1) --"
+
+# (a) a register "collected by the old version": a suffixed record with a
+# long GLUED body under source S; the bare base id is taken by an
+# unrelated decision; a journal line with the SAME explicit id and the
+# SAME source, whose body is the START of the glued one -- --full must
+# add NO new record, and must say so.
+new_sandbox
+install_repo >/dev/null
+mkws ws15old
+DATE=$(date +%F)
+DEC15="$ROOT/ws15old/decisions.md"
+cat > "$DEC15" <<EOF
+# ws15old — decisions
+
+> Реестр решений: выбрали/вместо/почему. Устаревшее — [superseded by <id>], не стирать.
+
+### d-dup001 (2026-01-01) [active]
+an unrelated older decision under the bare base id
+— родилось: 2026-01-01 · «old unrelated»
+
+### d-dup001x5030 (2026-01-01) [active]
+chose Postgres over Mongo because it handles JSON natively and the team already knows it well, this glued body continues into unrelated prose that a pre-3.7 harvest pass stitched on by accident
+— родилось: $DATE · «Evening S»
+
+EOF
+F15A="$ROOT/ws15old/$DATE.md"
+cat > "$F15A" <<EOF
+# bro — $DATE / ws15old
+
+## Evening S
+DECIDED d-dup001: chose Postgres over Mongo because it handles JSON natively and the team already knows it well
+EOF
+CNT15A_BEFORE=$(grep -c '^### ' "$DEC15")
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws15old --full > "$SB/ws15old-out.log" 2>&1
+CNT15A_AFTER=$(grep -c '^### ' "$DEC15")
+assert_eq "(a) old-glued-duplicate: --full adds NO new record" "$CNT15A_AFTER" "$CNT15A_BEFORE"
+assert_contains "(a) old-glued-duplicate: reports '= already present as' the old suffixed id" "$(cat "$SB/ws15old-out.log")" "= already present as d-dup001x5030"
+
+# (c, part 1) --full a second time in a row: still nothing added
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws15old --full >/dev/null 2>&1
+CNT15A_TWICE=$(grep -c '^### ' "$DEC15")
+assert_eq "(c) old-glued-duplicate: a second --full in a row still adds nothing" "$CNT15A_TWICE" "$CNT15A_BEFORE"
+
+# (b) two GENUINELY different decisions given the SAME explicit id in ONE
+# journal record -- different beginnings, no prefix relationship -- both
+# must land as separate records, nothing lost.
+new_sandbox
+install_repo >/dev/null
+mkws ws15both
+DATE=$(date +%F)
+F15B="$ROOT/ws15both/$DATE.md"
+cat > "$F15B" <<EOF
+# bro — $DATE / ws15both
+
+## 09:00 · t — both real
+DECIDED d-samenum: chose the blue color scheme for the landing page header
+DECIDED d-samenum: switched the database backend from MySQL to Postgres entirely
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws15both --full > "$SB/ws15both-out.log" 2>&1
+DEC15B="$ROOT/ws15both/decisions.md"
+assert_contains "(b) two real collisions: the first decision lands" "$(cat "$DEC15B")" "chose the blue color scheme"
+assert_contains "(b) two real collisions: the second (genuinely different) decision ALSO lands" "$(cat "$DEC15B")" "switched the database backend from MySQL to Postgres"
+CNT15B=$(grep -c '^### ' "$DEC15B")
+assert_eq "(b) two real collisions: exactly 2 separate records, nothing merged or lost" "$CNT15B" "2"
+assert_not_contains "(b) two real collisions: neither is mistaken for 'already present'" "$(cat "$SB/ws15both-out.log")" "already present"
+
+# (c, part 2) --full a second time over the two-real-collisions case: still exactly 2
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws15both --full >/dev/null 2>&1
+CNT15B_TWICE=$(grep -c '^### ' "$DEC15B")
+assert_eq "(c) two real collisions: a second --full in a row still leaves exactly 2 records" "$CNT15B_TWICE" "2"
+
+# ===========================================================================
 # parts — additional per-builder test files land here (tests/parts/*.sh),
 # one file per builder so they don't step on each other. Each part is
 # SOURCED, not run as a subprocess, so it shares this suite's helpers

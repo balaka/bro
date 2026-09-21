@@ -130,6 +130,25 @@ What to expect after 3.7 → 3.8:
   `cowork` journal with a `testing` suffix) — small and safe, but still the
   operator's call.
 
+What to expect after 3.8.0 → 3.8.1:
+
+- Nothing to migrate: this is a harvest bugfix, not a storage-format change.
+  Re-running the installer is the whole upgrade.
+- If you ran a **full re-harvest on 3.8.0** (`bro-harvest.sh --all --full`)
+  over registers that a pre-3.7 harvest had already collected, check for
+  duplicates it may have produced: two records under the same base id and
+  the same journal source (`— родилось:`/`— родился:`), one body a plain
+  prefix of the other. That shape is the fingerprint of a marker whose
+  explicit id collided with another one — pre-3.7 harvest hashed its body
+  glued to the next paragraph, current harvest hashes the shorter, un-glued
+  body, so the same physical marker line ends up under two different
+  collision suffixes. Nothing was lost or deleted — mark the newer of the
+  pair `[duplicate of <older id>]` in its header/status field, same as the
+  other four already found and marked this way in `cowork/decisions.md`.
+  Running `--all --full` again on 3.8.1 does not produce any more of
+  these — it recognizes the same shape itself now and reuses the existing
+  record instead of writing a second one.
+
 ## After migration
 
 - Old chats can be reopened safely: the write-guard hook denies writes to

@@ -180,6 +180,82 @@ ensure_register() { # call ONLY under lock($1)
   printf '# %s\n\n> %s\n> Пополняется жатвой (bro-harvest) из дневников; статусы правятся руками. Записи не удалять — замещать.\n\n' "$2" "$3" > "$1"
 }
 
+# trim_ws() — v3.8.1. $1 = string -> the same string with leading and
+# trailing [:space:] stripped, on stdout. Only the edges — internal
+# whitespace (the shape of the operator's own prose) is untouched.
+trim_ws() {
+  printf '%s' "$1" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
+# find_glued_dup_multiline() / find_glued_dup_oneline() — v3.8.1
+# (coordinator fix). Before a COLLISION branch mints a NEW id-with-suffix
+# record, both ask: is this really the SAME marker occurrence an OLDER
+# harvest pass already filed under a DIFFERENT suffix?
+#
+# Real incident this closes: two DIFFERENT decisions in cowork's chronicle
+# were both typed "DECIDED d-0908-26: …" by a chat writing the journal (a
+# chat's id reuse, not a bro bug). The second occurrence collided and got
+# filed as d-0908-26x5030 — back when harvest predated the v3.7 glue fix,
+# so that record's BODY is the marker line glued to its adjacent paragraph
+# (2477 bytes). A v3.8.0 --full re-read of the SAME journal line computes
+# a SHORT, un-glued body (829 bytes — exactly the first 829 bytes of the
+# old glued one) for the exact same physical marker, hashes it to a
+# DIFFERENT suffix (d-0908-26x3fc3), finds no id match, and writes a
+# SECOND record for what is, underneath, the one marker line.
+# "Same marker, re-hashed" and "two genuinely different decisions the
+# chat happened to give the same explicit id" look identical by id
+# alone — the disambiguator is the body relationship: a glued body always
+# STARTS WITH the un-glued one (or vice versa, if some future change
+# reverses which pass ran first), byte for byte after trimming whitespace
+# at the edges. Two unrelated decisions essentially never share that
+# relationship — the test suite's own "two real collisions in one record"
+# case uses bodies that begin differently, which is what real distinct
+# content looks like.
+# $1=register file $2=base id (before any x<hash> suffix) $3=SRC
+# attribution (exactly what would go after "— родилось: "/"— родился: ")
+# $4=the NEW body, ALREADY trim_ws()-ed by the caller. Prints the existing
+# id and returns 0 on a match (same base id, same SRC, one trimmed body a
+# prefix of the other); prints nothing and returns 1 otherwise — including
+# when the register doesn't exist yet (nothing to find).
+find_glued_dup_multiline() {
+  local reg="$1" base="$2" src="$3" newbody="$4" ln id hdrbody hdrsrc
+  [ -f "$reg" ] || return 1
+  while IFS= read -r ln; do
+    [ -n "$ln" ] || continue
+    id=$(sed -n "${ln}p" "$reg" | sed -E 's/^### ([^ ]+).*/\1/')
+    hdrbody=$(trim_ws "$(sed -n "$((ln+1))p" "$reg")")
+    hdrsrc=$(sed -n "$((ln+2))p" "$reg" | sed -E 's/^— родилось: //')
+    [ "$hdrsrc" = "$src" ] || continue
+    case "$newbody" in
+      "$hdrbody"*) [ -n "$hdrbody" ] && { echo "$id"; return 0; } ;;
+    esac
+    case "$hdrbody" in
+      "$newbody"*) [ -n "$newbody" ] && { echo "$id"; return 0; } ;;
+    esac
+  done < <(grep -nE "^### ${base}(x[a-f0-9]+)? \(" "$reg" 2>/dev/null | cut -d: -f1)
+  return 1
+}
+find_glued_dup_oneline() {
+  local reg="$1" base="$2" src="$3" newbody="$4" ln line id rest hdrbody hdrsrc
+  [ -f "$reg" ] || return 1
+  while IFS= read -r ln; do
+    [ -n "$ln" ] || continue
+    line=$(sed -n "${ln}p" "$reg")
+    id=$(printf '%s' "$line" | sed -E 's/^- \[.\] ([^ (]+).*/\1/')
+    rest=$(printf '%s' "$line" | sed -E 's/^- \[.\] [^·]*· //')
+    hdrsrc="${rest#*— родился: }"
+    hdrbody=$(trim_ws "${rest% — родился: *}")
+    [ "$hdrsrc" = "$src" ] || continue
+    case "$newbody" in
+      "$hdrbody"*) [ -n "$hdrbody" ] && { echo "$id"; return 0; } ;;
+    esac
+    case "$hdrbody" in
+      "$newbody"*) [ -n "$newbody" ] && { echo "$id"; return 0; } ;;
+    esac
+  done < <(grep -nE "^- \[.\] ${base}(x[a-f0-9]+)? " "$reg" 2>/dev/null | cut -d: -f1)
+  return 1
+}
+
 # write_state_snapshot() — v3.8 (§5). $1=workspace $2=record date (YYYY-MM-DD)
 # $3=record HH:MM $4=record epoch (epoch_of(), bro-lib.sh) $5=the record's
 # own "## HH:MM · …" text (sans "## ", for the quoted attribution line)
@@ -462,7 +538,7 @@ harvest_ws() {
       # жирным") — "ИНСАЙТ: **вывод** — пояснение" — lost its ** along with
       # the marker's own optional bold-wrapping. BODY is now taken from the
       # bullet-stripped line as-is, never touched by the ** strip below.
-      local CLEAN KW HEAD TOK ID BODY H CH OLN OLDLINE NEWLINE MISS OTMP
+      local CLEAN KW HEAD TOK ID BODY H CH OLN OLDLINE NEWLINE MISS OTMP BASEID DUPID
       CLEAN=$(printf '%s' "$LINE" | sed -E 's/^[[:space:]]*(-[[:space:]]+)?//')
       HEAD="${CLEAN%%:*}"                      # keyword [+ optional token], ** (if any) still in place
       BODY="${CLEAN#*:}"; BODY="${BODY# }"      # everything after the first colon — untouched, own ** intact
@@ -503,10 +579,16 @@ harvest_ws() {
           ensure_register "$DEC" "$WS — decisions" "Реестр решений: выбрали/вместо/почему. Устаревшее — [superseded by <id>], не стирать."
           if grep -q "^### ${ID} (" "$DEC"; then
             if ! grep -A1 "^### ${ID} (" "$DEC" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
-              ID="${ID}x${CH}"
-              grep -q "^### ${ID} (" "$DEC" || {
-                printf '### %s (%s) [rejected]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
-                say "COLLISION: id reused — wrote rejection $ID → $WS/decisions.md"; }
+              BASEID="$ID"
+              DUPID=$(find_glued_dup_multiline "$DEC" "$BASEID" "$SRC" "$(trim_ws "$BODY")")
+              if [ -n "$DUPID" ]; then
+                say "= already present as $DUPID → $WS/decisions.md"
+              else
+                ID="${ID}x${CH}"
+                grep -q "^### ${ID} (" "$DEC" || {
+                  printf '### %s (%s) [rejected]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
+                  say "COLLISION: id reused — wrote rejection $ID → $WS/decisions.md"; }
+              fi
             fi
           else
             printf '### %s (%s) [rejected]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
@@ -520,10 +602,22 @@ harvest_ws() {
           if grep -q "^### ${ID} (" "$DEC"; then
             # same id already in register — same record, or a collision with different content?
             if ! grep -A1 "^### ${ID} (" "$DEC" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
-              ID="${ID}x${CH}"
-              grep -q "^### ${ID} (" "$DEC" || {
-                printf '### %s (%s) [active]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
-                say "COLLISION: id reused with different content — wrote decision $ID → $WS/decisions.md"; }
+              # v3.8.1 (coordinator fix): before minting a new x<hash>
+              # record, check whether this is really the SAME marker
+              # occurrence an OLDER (pre-3.7) pass already filed under a
+              # DIFFERENT x<hash> — its body was glued to the next
+              # paragraph back then; today's un-glued body is a plain
+              # prefix of it. See find_glued_dup_multiline()'s own comment.
+              BASEID="$ID"
+              DUPID=$(find_glued_dup_multiline "$DEC" "$BASEID" "$SRC" "$(trim_ws "$BODY")")
+              if [ -n "$DUPID" ]; then
+                say "= already present as $DUPID → $WS/decisions.md"
+              else
+                ID="${ID}x${CH}"
+                grep -q "^### ${ID} (" "$DEC" || {
+                  printf '### %s (%s) [active]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
+                  say "COLLISION: id reused with different content — wrote decision $ID → $WS/decisions.md"; }
+              fi
             fi
           else
             printf '### %s (%s) [active]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
@@ -536,10 +630,16 @@ harvest_ws() {
           ensure_register "$OPEN" "$WS — open items" "Хвосты и открытые вопросы. Закрытие — маркером CLOSED:/ЗАКРЫТ: в дневнике (жатва проставляет [x]), не руками. Жатва закрытые не переоткрывает."
           if grep -q "^- \[.\] ${ID} ·" "$OPEN"; then
             if ! grep "^- \[.\] ${ID} ·" "$OPEN" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
-              ID="${ID}x${CH}"
-              grep -q "^- \[.\] ${ID} ·" "$OPEN" || {
-                printf -- '- [ ] %s · %s — родился: %s\n' "$ID" "$BODY" "$SRC" >> "$OPEN"
-                say "COLLISION: id reused with different content — wrote tail $ID → $WS/open.md"; }
+              BASEID="$ID"
+              DUPID=$(find_glued_dup_oneline "$OPEN" "$BASEID" "$SRC" "$(trim_ws "$BODY")")
+              if [ -n "$DUPID" ]; then
+                say "= already present as $DUPID → $WS/open.md"
+              else
+                ID="${ID}x${CH}"
+                grep -q "^- \[.\] ${ID} ·" "$OPEN" || {
+                  printf -- '- [ ] %s · %s — родился: %s\n' "$ID" "$BODY" "$SRC" >> "$OPEN"
+                  say "COLLISION: id reused with different content — wrote tail $ID → $WS/open.md"; }
+              fi
             fi
           else
             printf -- '- [ ] %s · %s — родился: %s\n' "$ID" "$BODY" "$SRC" >> "$OPEN"
@@ -612,10 +712,16 @@ harvest_ws() {
           ensure_register "$RCAND" "rule candidates (global queue)" "Кандидаты в _principles.md. В принципы — только после подтверждения оператора: [x] принят / [-] отклонён."
           if grep -q "^- \[.\] ${ID} (" "$RCAND"; then
             if ! grep "^- \[.\] ${ID} (" "$RCAND" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
-              ID="${ID}x${CH}"
-              grep -q "^- \[.\] ${ID} (" "$RCAND" || {
-                printf -- '- [ ] %s (%s) · %s — родился: %s\n' "$ID" "$WS" "$BODY" "$SRC" >> "$RCAND"
-                say "COLLISION: id reused with different content — wrote rule-candidate $ID"; }
+              BASEID="$ID"
+              DUPID=$(find_glued_dup_oneline "$RCAND" "$BASEID" "$SRC" "$(trim_ws "$BODY")")
+              if [ -n "$DUPID" ]; then
+                say "= already present as $DUPID → _rule-candidates.md"
+              else
+                ID="${ID}x${CH}"
+                grep -q "^- \[.\] ${ID} (" "$RCAND" || {
+                  printf -- '- [ ] %s (%s) · %s — родился: %s\n' "$ID" "$WS" "$BODY" "$SRC" >> "$RCAND"
+                  say "COLLISION: id reused with different content — wrote rule-candidate $ID"; }
+              fi
             fi
           else
             printf -- '- [ ] %s (%s) · %s — родился: %s\n' "$ID" "$WS" "$BODY" "$SRC" >> "$RCAND"
