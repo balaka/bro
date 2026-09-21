@@ -97,6 +97,39 @@ What to expect after 3.6 → 3.7:
   incremental pass widened by an edited prefix) does not duplicate anything
   already in a register.
 
+What to expect after 3.7 → 3.8:
+
+- Nothing to migrate: `~/bro/_state.md` and every workspace's `insights.md` are
+  brand new and start out empty. The two new markers, `STATE:`/`СОСТОЯНИЕ:`
+  and `INSIGHT:`/`ИНСАЙТ:`, only exist from this version forward, so there is
+  nothing in old journals for them to reconcile with. Re-running the
+  installer is the whole upgrade, same as every 3.x → 3.y before this one.
+- A chat already open when the update runs keeps its old hook set until it is
+  reopened — same rule as always, hook registrations are read at session
+  start. Concretely, until reopened it keeps harvesting only at session start
+  (not also in the background after each answer), keeps the older write
+  guard (matches the journal's path appearing anywhere in a Bash command's
+  text, not specifically where the command writes), and will not self-create
+  a workspace or show the new operator-state/insights blocks in the context
+  it already has. Reopen it to pick all of that up.
+- The original six markers now also recognize a Capitalized RU writing
+  (`Решение:`, `Правило:`, …), not only ALL CAPS — `STATE:`/`INSIGHT:` stay
+  ALL-CAPS-only in either language (see SKILL.md's **Journal format** for
+  why). Harvest also now reads a journal filename with a topic suffix
+  (`2026-04-22-offerings-banner.md`), not only the bare date — before this
+  fix such a file was invisible to harvest forever, silently, `--full`
+  included. A **full re-harvest of existing journals**
+  (`~/.claude/bro/bin/bro-harvest.sh --all --full`) would pick up any pre-3.8
+  lines written in the Capitalized form, or sitting in a suffixed filename,
+  and missed until now — but run it only when the operator explicitly asks
+  for it, not automatically as part of an update, and run it in the
+  background: a real measurement across every non-archived journal already
+  in the store found it takes about a minute and a half across every
+  project, and would add 8 lines total, all of them genuine markers (one of
+  the 8 only turned up once the suffixed-filename fix above went in — a
+  `cowork` journal with a `testing` suffix) — small and safe, but still the
+  operator's call.
+
 ## After migration
 
 - Old chats can be reopened safely: the write-guard hook denies writes to

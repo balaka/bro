@@ -128,6 +128,101 @@ BADLN=$(grep -nE "$MRE_NOCOLON" "$BODY_RAW" 2>/dev/null | head -1)
 if [ -n "$BADLN" ]; then
   err "body line ${BADLN%%:*} looks like a marker missing its ':' — harvest would silently skip it. Write 'KEYWORD: text' or reword: ${BADLN#*:}"
 fi
+# (c) v3.8 (§7): a TAIL/ХВОСТ/Хвост line is ONE open item, not a notebook
+# entry for several ("- one record carries 4-6 items through '; ', the
+# same list re-recorded four times with drifting wording — this is
+# open.md's main weight" per the plan). Reject before a byte is written if
+# the line has 2+ TOP-LEVEL "; " separators, 2+ real numbered-list items
+# ("(1)"+"(2)" or "1)"+"2)"), or is over length. Uses marker_type()
+# (bro-lib.sh) to find the CANONICAL type, not a re-spelled keyword list —
+# same discipline as checks (a)/(b) above and harvest.sh's own dispatch:
+# any of the three accepted spellings (TAIL, ХВОСТ, Хвост) is caught
+# identically, and every OTHER marker type is untouched by this rule
+# (plan: "Остальные метки не проверяются этим правилом").
+#
+# v3.8 review fixes (проверяющий №2, run against all 613 real ХВОСТ lines
+# in the chronicles) — the first cut of all three checks below was too
+# loose or too strict:
+#  - "; " used to count EVERY occurrence anywhere on the line, so a single
+#    aside like "(утверждено 01.09; не редактировать; больше ничего)"
+#    tripped the 2+ threshold even though both semicolons sit inside one
+#    parenthetical, not between separate open items. Now only TOP-LEVEL
+#    "; " counts — occurrences inside (...), «...» or "..." are blanked
+#    out first (see TL_TOPLEVEL);
+#  - the numbered-list check used to fire on ANY "digit+)" pair on the
+#    line, catching a date ("03.09)"), a field reference ("(20) … (15)"),
+#    or a code ("(58Q7G810295)") that only coincidentally contains one.
+#    Now it requires an actual enumeration: literally BOTH "(1)" and "(2)"
+#    present, or BOTH "1)" and "2)" present (real lists start counting at
+#    1), each anchored at the start of the line or right after a space so
+#    a mid-token digit-paren never counts;
+#  - the character-vs-byte probe used to read whatever locale the calling
+#    process happened to already have — and a chat/hook environment
+#    commonly has none set at all, silently taking the 750-byte fallback
+#    on every call instead of the intended 400-character limit. The probe
+#    (and the real measurement) now explicitly force LC_ALL=en_US.UTF-8,
+#    so character-counting is what actually runs whenever a UTF-8 locale
+#    is installed at all (true on every system this project targets); the
+#    750-byte path is now a genuine last resort, only reached when even a
+#    forced UTF-8 locale still can't count characters (verified by the
+#    same 'ё' probe, not assumed).
+TL_CHARS_OK=""
+TL_LNNO=0
+while IFS= read -r TL_RAWLN || [ -n "$TL_RAWLN" ]; do
+  TL_LNNO=$((TL_LNNO+1))
+  printf '%s\n' "$TL_RAWLN" | grep -qE "$MRE" || continue
+  # same normalize-then-split as bro-harvest.sh's own KW extraction
+  # (strip indent/bullet/bold, keyword = first word before ':', before ' ')
+  TL_CLEAN=$(printf '%s' "$TL_RAWLN" | sed -E 's/^[[:space:]]*(-[[:space:]]+)?//; s/\*\*//g')
+  TL_HEAD="${TL_CLEAN%%:*}"
+  TL_BODY="${TL_CLEAN#*:}"; TL_BODY="${TL_BODY# }"
+  TL_KW="${TL_HEAD%% *}"
+  TL_KW="${TL_KW%%-*}"; TL_KW="${TL_KW%%–*}"; TL_KW="${TL_KW%%—*}"
+  TL_KC=$(marker_type "$TL_KW") || continue
+  [ "$TL_KC" = "TAIL" ] || continue
+
+  # top-level only: blank out (...) / «...» / "..." spans before counting,
+  # so an aside's own internal "; " never counts as a second/third item
+  TL_TOPLEVEL=$(printf '%s' "$TL_BODY" | sed -E 's/\([^)]*\)//g; s/«[^»]*»//g; s/"[^"]*"//g')
+  TL_SEMIN=$(printf '%s' "$TL_TOPLEVEL" | grep -o '; ' | wc -l | tr -d ' ')
+  [ -n "$TL_SEMIN" ] || TL_SEMIN=0
+  if [ "$TL_SEMIN" -ge 2 ]; then
+    err "line $TL_LNNO: a TAIL/ХВОСТ/Хвост line carries $TL_SEMIN top-level '; '-separated items — one open item per TAIL: line, split the rest into their own TAIL: lines: $(printf '%s' "$TL_BODY" | cut -c1-80)"
+  fi
+
+  # real numbered list only: both "(1)" and "(2)", or both "1)" and "2)" —
+  # not just any two "digit)" substrings (dates, field refs, codes)
+  TL_HASP1=0; printf '%s' "$TL_BODY" | grep -qE '(^|[[:space:]])\(1\)' && TL_HASP1=1
+  TL_HASP2=0; printf '%s' "$TL_BODY" | grep -qE '(^|[[:space:]])\(2\)' && TL_HASP2=1
+  TL_HASB1=0; printf '%s' "$TL_BODY" | grep -qE '(^|[[:space:]])1\)' && TL_HASB1=1
+  TL_HASB2=0; printf '%s' "$TL_BODY" | grep -qE '(^|[[:space:]])2\)' && TL_HASB2=1
+  if { [ "$TL_HASP1" = 1 ] && [ "$TL_HASP2" = 1 ]; } || { [ "$TL_HASB1" = 1 ] && [ "$TL_HASB2" = 1 ]; }; then
+    err "line $TL_LNNO: a TAIL/ХВОСТ/Хвост line looks like a numbered list (both item 1 and item 2 present) — one open item per TAIL: line, split the rest into their own TAIL: lines: $(printf '%s' "$TL_BODY" | cut -c1-80)"
+  fi
+
+  # length: characters, not bytes -- probed once, lazily, against an
+  # EXPLICITLY forced UTF-8 locale (LC_ALL=en_US.UTF-8) rather than
+  # whatever locale this process happened to inherit (a chat/hook
+  # environment commonly has none set at all, which would otherwise always
+  # take the byte fallback below). The probe still verifies the forced
+  # locale actually behaves as UTF-8-aware (a known 2-byte, 1-character
+  # probe answers "1" from wc -m only when it truly is) rather than assume
+  # LC_ALL=en_US.UTF-8 silently worked — falls back to the plan's own
+  # 750-byte threshold only when it genuinely didn't.
+  if [ -z "$TL_CHARS_OK" ]; then
+    TL_PC=$(printf 'ё' | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')
+    TL_PB=$(printf 'ё' | wc -c | tr -d ' ')
+    if [ "$TL_PC" = "1" ] && [ "$TL_PB" != "1" ]; then TL_CHARS_OK=1; else TL_CHARS_OK=0; fi
+  fi
+  if [ "$TL_CHARS_OK" = 1 ]; then
+    TL_LEN=$(printf '%s' "$TL_BODY" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' '); TL_LIMIT=400; TL_UNIT="characters"
+  else
+    TL_LEN=$(printf '%s' "$TL_BODY" | wc -c | tr -d ' '); TL_LIMIT=750; TL_UNIT="bytes"
+  fi
+  if [ "$TL_LEN" -gt "$TL_LIMIT" ]; then
+    err "line $TL_LNNO: a TAIL/ХВОСТ/Хвост line is $TL_LEN $TL_UNIT (over the $TL_LIMIT-$TL_UNIT limit) — one open item per TAIL: line; trim it or split the rest into their own TAIL: lines"
+  fi
+done < "$BODY_RAW"
 
 # ---- auto-repair: guarantee a blank line right after every marker line,
 # so a body that stacks a marker and a following paragraph with no blank

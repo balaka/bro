@@ -53,13 +53,19 @@ if [ -f "$HOME/.claude/commands/bro.md" ]; then
 fi
 
 # 3. config: create with defaults, or add missing keys without touching existing ones
+# autoCreateAfterAnswers (v3.8, operator's own decision): a self-created
+# workspace (bro-session-start.sh finds a git repo bro has never seen) is
+# only actually mkdir'd once this many of the chat's own responses have
+# gone by (bro-stop-turnstile.sh counts them) — real work starting, not
+# just bro noticing a folder. Same merge shape as staleMinutes below.
 if [ ! -f "$CONFIG" ]; then
-  printf '{\n  "version": "%s",\n  "root": "~/bro",\n  "staleMinutes": 30,\n  "workspaces": {}\n}\n' "$(cat "$SRC_DIR/VERSION")" > "$CONFIG"
+  printf '{\n  "version": "%s",\n  "root": "~/bro",\n  "staleMinutes": 30,\n  "autoCreateAfterAnswers": 5,\n  "workspaces": {}\n}\n' "$(cat "$SRC_DIR/VERSION")" > "$CONFIG"
 else
   jq --arg v "$(cat "$SRC_DIR/VERSION")" \
      '.version = $v
       | .root = (.root // "~/bro")
       | .staleMinutes = (.staleMinutes // 30)
+      | .autoCreateAfterAnswers = (.autoCreateAfterAnswers // 5)
       | .workspaces = (.workspaces // {})' "$CONFIG" > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
 fi
 
@@ -85,13 +91,23 @@ jq --arg bin "$BIN_DIR" '
       {type:"command", command:($bin+"/bro-session-start.sh"), timeout:10},
       {type:"command", command:($bin+"/bro-harvest-hook.sh"), async:true}]};
 
+  # Stop = turnstile (freshness/form gate, 15s cap) + async harvest — the
+  # same async harvest hook already registered under SessionStart above,
+  # now firing every turn too (v3.8 section 3) so registers stop lagging a
+  # whole chat behind. Added inside the SAME group, in its hooks array,
+  # same shape as start($m) above — not a second top-level Stop group.
+  # (No apostrophes in this comment block on purpose: it lives inside the
+  # single-quoted jq program below, where one would close the string early.)
   .hooks = (.hooks // {})
   | .hooks.SessionStart = ((.hooks.SessionStart | scrub) + [
       start("startup"), start("resume"), start("compact"), start("clear")
     ])
   | .hooks.Stop = ((.hooks.Stop | scrub) + [
-      {hooks:[{type:"command", command:($bin+"/bro-stop-turnstile.sh"), timeout:15,
-               statusMessage:"bro: checking journal freshness"}]}
+      {hooks:[
+        {type:"command", command:($bin+"/bro-stop-turnstile.sh"), timeout:15,
+         statusMessage:"bro: checking journal freshness"},
+        {type:"command", command:($bin+"/bro-harvest-hook.sh"), async:true}
+      ]}
     ])
   | .hooks.PreToolUse = ((.hooks.PreToolUse | scrub) + [
       {matcher:"Write|Edit|Bash", hooks:[{type:"command", command:($bin+"/bro-write-guard.sh"), timeout:10}]}
@@ -105,7 +121,13 @@ echo "[bro-install] done:"
 echo "  skill    → $SKILL_DIR/SKILL.md"
 echo "  scripts  → $BIN_DIR/"
 echo "  config   → $CONFIG"
-echo "  hooks    → $SETTINGS (SessionStart ×4: context + async harvest, Stop, PreToolUse Write|Edit|Bash, PreCompact)"
+echo "  hooks    → $SETTINGS (SessionStart ×4: context + async harvest, Stop: turnstile + async harvest, PreToolUse Write|Edit|Bash, PreCompact)"
 echo ""
 echo "Open a new session (hooks load on start). If you have v1/v2 bro folders,"
 echo "the session-start hook will flag them — run /bro migrate when it does."
+echo ""
+echo "Upgrading from an older 3.x? Optional, ask the operator first (it adds to their registers):"
+echo "  ~/.claude/bro/bin/bro-harvest.sh --all --full"
+echo "re-reads old journals once and picks up markers older versions missed — Capitalized"
+echo "Russian ones (Решение:, Правило:, Хвост:) and journals with a suffix in the name."
+echo "Only adds, never duplicates; 1–2 minutes on a busy store."

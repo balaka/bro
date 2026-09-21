@@ -425,19 +425,29 @@ assert_contains "CLOSED: close-miss log names the bogus id" "$(cat "$MISS")" "t-
 MISSCNT=$(wc -l < "$MISS" | tr -d ' ')
 assert_eq "CLOSED: close-miss deduped across repeated --full passes" "$MISSCNT" "1"
 
-# regression: a marker that is the literal last physical line of a journal,
-# with NO trailing newline after it (any hand-edit, or any pre-bro-append.sh
-# content -- bro-append.sh itself always terminates its own writes), must
-# still be seen. `wc -l` counts newlines, not lines, so it used to undercount
-# by one for exactly this file shape, and the awk scan's own `NR > to {exit}`
-# bound silently dropped the file's true last line -- no register write, no
-# CLOSE-MISS, no health.log line, no error at all.
+# regression (v3.8 §3, coordinator fix -- supersedes the pre-3.8 contract
+# tested here before): a marker that is the literal last physical line of a
+# journal, with NO trailing newline after it, must NOT be acted on in a
+# pass that sees it in that state -- it may be bro-append.sh mid-write,
+# caught between its own header write and its own body write, now that
+# harvest runs after every response. It must become visible normally,
+# complete, once it DOES end in '\n' -- exactly what bro-append.sh's own
+# "repair a dangling last line" step guarantees on its very next write.
+# (The underlying reason `awk 'END{print NR}'` and not `wc -l` computes
+# TOTAL is unchanged and still load-bearing here -- `wc -l` would already
+# undercount a dangling last line by one on its own, and this new
+# dangling-line exclusion subtracts a further one on top of that count.)
 mkws wseof
 OPENE="$ROOT/wseof/open.md"
 printf '# wseof — open items\n\n- [ ] t-fix00 · closing at EOF with no trailing newline — родился: 2026-09-19\n\n' > "$OPENE"
-printf '# bro — %s / wseof\n\n## 09:00 · t — topic\nCLOSED t-fix00: closing at EOF with no trailing newline' "$(date +%F)" > "$ROOT/wseof/$(date +%F).md"
+JEOF="$ROOT/wseof/$(date +%F).md"
+printf '# bro — %s / wseof\n\n## 09:00 · t — topic\nCLOSED t-fix00: closing at EOF with no trailing newline' "$(date +%F)" > "$JEOF"
 "$BIN/bro-harvest.sh" --root "$ROOT" --workspace wseof --full >/dev/null
-assert_contains "EOF marker: a CLOSED on the file's unterminated last line is still seen" "$(grep -F 't-fix00' "$OPENE")" "- [x] t-fix00"
+assert_contains "EOF marker: a CLOSED on the file's unterminated last line is NOT yet acted on" "$(grep -F 't-fix00' "$OPENE")" "- [ ] t-fix00"
+assert_file_absent "EOF marker: not-yet-acted-on means no false CLOSE-MISS either" "$ROOT/wseof/.close-misses.log"
+printf '\n' >> "$JEOF"   # the newline bro-append.sh's own repair step would add on its next write to this journal
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace wseof --full >/dev/null
+assert_contains "EOF marker: once terminated with a newline, the same marker closes normally" "$(grep -F 't-fix00' "$OPENE")" "- [x] t-fix00"
 
 # ===========================================================================
 # 6. bro-append.sh
@@ -756,6 +766,418 @@ assert_contains "no-jq: bro-harvest.sh works end to end without jq" "$OUT" "+ de
 NCNT=$(grep -c '^### ' "$ROOT/nojqws/decisions.md" 2>/dev/null || echo 0)
 assert_eq "no-jq: harvested record actually landed in the register" "$NCNT" "1"
 
+# ===========================================================================
+# 10. marker recognition: dual-case RU, EN caps-only (v3.8 §1)
+# ===========================================================================
+echo "-- 10. marker recognition: dual-case RU, EN caps-only --"
+new_sandbox
+install_repo >/dev/null
+mkws ws10
+DATE=$(date +%F)
+F="$ROOT/ws10/$DATE.md"
+cat > "$F" <<EOF
+# bro — $DATE / ws10
+
+## 09:00 · t — bulleted rule
+- Правило: файлы и журнал пишутся так, чтобы читалось через полгода без контекста
+
+## 09:05 · t — capitalized decision
+Решение: выбрали Sonnet для сборки 3.8
+
+## 09:10 · t — non-markers
+State: pending
+Rule: x
+решение: строчными не считается меткой
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws10 --full > "$SB/ws10-out.log" 2>&1
+RCAND="$ROOT/_rule-candidates.md"
+DEC10="$ROOT/ws10/decisions.md"
+assert_contains "dual-case: bulleted 'Правило:' (Capitalized) becomes a rule candidate" "$(cat "$RCAND" 2>/dev/null)" "файлы и журнал пишутся так"
+assert_contains "dual-case: 'Решение:' (Capitalized) becomes a decision" "$(cat "$DEC10" 2>/dev/null)" "выбрали Sonnet для сборки 3.8"
+assert_not_contains "dual-case: 'State: pending' (EN Title-case) is not a marker" "$(cat "$DEC10" "$RCAND" 2>/dev/null)" "pending"
+assert_not_contains "dual-case: 'Rule: x' (EN Title-case) creates no rule candidate" "$(cat "$RCAND" 2>/dev/null)" "Rule: x"
+assert_not_contains "dual-case: 'решение:' (RU lowercase) is not a marker" "$(cat "$DEC10" 2>/dev/null)" "строчными не считается"
+assert_file_absent "dual-case: none of the non-markers created a STATE snapshot" "$ROOT/_state.md"
+
+# end-to-end: the Capitalized RU writing closes a tail exactly like CLOSED/ЗАКРЫТ
+mkws ws10closed
+PROJc=$(proj_dir ws10closed)
+cd "$PROJc"
+printf 'TAIL: dual-case close target\n' | "$BIN/bro-append.sh" --workspace ws10closed --thread t --topic seed >/dev/null
+cd "$REPO_DIR"
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws10closed >/dev/null
+OPEN10="$ROOT/ws10closed/open.md"
+TID10=$(grep -oE '^- \[ \] [a-z0-9-]+' "$OPEN10" | head -1 | awk '{print $4}')
+cd "$PROJc"
+printf 'Закрыт %s: closed via the Capitalized RU writing\n' "$TID10" | "$BIN/bro-append.sh" --workspace ws10closed --thread t --topic close >/dev/null
+cd "$REPO_DIR"
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws10closed >/dev/null
+assert_contains "dual-case: 'Закрыт <id>:' (Capitalized) closes a tail same as CLOSED/ЗАКРЫТ" "$(grep -F "$TID10" "$OPEN10")" "- [x] $TID10"
+
+# bro-append.sh's pre-write colon check recognizes the Capitalized RU writing too
+mkws ws10val
+PROJv=$(proj_dir ws10val)
+cd "$PROJv"
+OUT=$(printf 'Решение chose X without a colon\n' | "$BIN/bro-append.sh" --workspace ws10val --thread t --topic top 2>&1); RC=$?
+cd "$REPO_DIR"
+assert_exit "dual-case: bro-append.sh rejects a colonless Capitalized-RU marker (exit 1)" "$RC" "1"
+assert_contains "dual-case: rejection names the colon problem" "$OUT" "missing its ':'"
+
+# bro-stop-turnstile.sh's degraded fallback (bro-lib.sh missing) also uses
+# the v3.8 keyword set for its colonless-marker lint, not the pre-3.8 list
+mkws ws10nolib
+PROJnl=$(proj_dir ws10nolib)
+FNL="$ROOT/ws10nolib/$(date +%F).md"
+printf '# bro — %s / ws10nolib\n\n## 09:00 · t — topic\nПравило без двоеточия тут\n' "$(date +%F)" > "$FNL"
+mv "$BIN/bro-lib.sh" "$SB/bro-lib.sh.hidden"
+IN=$(hookjson "$PROJnl" "$(next_sid)" p1 Stop)
+OUT=$(printf '%s' "$IN" | "$BIN/bro-stop-turnstile.sh" 2>&1)
+mv "$SB/bro-lib.sh.hidden" "$BIN/bro-lib.sh"
+assert_contains "dual-case: degraded (no bro-lib.sh) fallback still catches a colonless Capitalized-RU marker" "$OUT" "marker-like line(s) without ':'"
+assert_contains "dual-case: degraded fallback logs why it's degraded" "$(cat "$HOME/.claude/bro/health.log" 2>/dev/null)" "bro-lib.sh not found next to"
+
+# ===========================================================================
+# 11. near-marker counter (v3.8 §1)
+# ===========================================================================
+echo "-- 11. near-marker counter --"
+new_sandbox
+install_repo >/dev/null
+mkws ws11
+DATE=$(date +%F)
+F="$ROOT/ws11/$DATE.md"
+cat > "$F" <<EOF
+# bro — $DATE / ws11
+
+## 09:00 · t — near misses and one real marker
+Решено: перешли на новый формат
+Правила: два новых правила добавлены
+DECIDED: настоящее решение, должно остаться меткой
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws11 --full > "$SB/ws11-out.log" 2>&1
+DEC11="$ROOT/ws11/decisions.md"
+assert_not_contains "near-marker: 'Решено:' (wrong grammatical form) is not harvested as a decision" "$(cat "$DEC11" 2>/dev/null)" "перешли на новый формат"
+assert_not_contains "near-marker: 'Правила:' (plural, wrong form) creates no rule candidate" "$(cat "$ROOT/_rule-candidates.md" 2>/dev/null)" "два новых правила добавлены"
+assert_contains "near-marker: a real 'DECIDED:' next to near-misses is still harvested normally" "$(cat "$DEC11" 2>/dev/null)" "настоящее решение"
+assert_contains "near-marker: passive counter reports exactly 2 near-miss lines" "$(cat "$SB/ws11-out.log")" "2 near-marker line(s) not harvested"
+HEALTH="$HOME/.claude/bro/health.log"
+assert_file_exists "near-marker: health.log written" "$HEALTH"
+HCNT11=$(grep -c 'near-marker line(s) not harvested' "$HEALTH" 2>/dev/null || echo 0)
+assert_eq "near-marker: exactly one health.log line for this pass" "$HCNT11" "1"
+assert_contains "near-marker: health.log names the workspace and count" "$(cat "$HEALTH")" "ws11: 2 near-marker line(s) not harvested"
+
+# a clean pass (nothing near-missed) stays silent — same N=0 contract as the pre-existing glue counter
+new_sandbox
+install_repo >/dev/null
+mkws ws11clean
+F2="$ROOT/ws11clean/$DATE.md"
+cat > "$F2" <<EOF
+# bro — $DATE / ws11clean
+
+## 09:00 · t — clean
+DECIDED: nothing near this at all
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws11clean --full > "$SB/ws11clean-out.log" 2>&1
+assert_not_contains "near-marker: N=0 case prints nothing about near-misses" "$(cat "$SB/ws11clean-out.log")" "near-marker line(s)"
+assert_file_absent "near-marker: N=0 case writes no health.log" "$HOME/.claude/bro/health.log"
+
+# dash-instead-of-colon and lowercase RU are also near-misses
+new_sandbox
+install_repo >/dev/null
+mkws ws11dash
+F3="$ROOT/ws11dash/$DATE.md"
+cat > "$F3" <<EOF
+# bro — $DATE / ws11dash
+
+## 09:00 · t — dash and lowercase
+Решение — сделали так, а не иначе
+решение: то же самое, но строчными
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws11dash --full > "$SB/ws11dash-out.log" 2>&1
+assert_contains "near-marker: dash-instead-of-colon and lowercase both counted (2)" "$(cat "$SB/ws11dash-out.log")" "2 near-marker line(s) not harvested"
+assert_file_absent "near-marker: dash/lowercase lines create no decision record" "$ROOT/ws11dash/decisions.md"
+
+# an immediate incremental (non-full) re-run must not re-report the same
+# near-misses — same file-level stamp gate that already keeps a plain re-run
+# from re-adding records (see section 3's "unchanged re-run adds no records")
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws11dash > "$SB/ws11dash-out2.log" 2>&1
+HCNT11D=$(grep -c 'near-marker line(s) not harvested' "$HOME/.claude/bro/health.log" 2>/dev/null || echo 0)
+assert_eq "near-marker: an immediate incremental re-run does not add a second health.log line" "$HCNT11D" "1"
+
+# ===========================================================================
+# 12. STATE snapshot (v3.8 §5)
+# ===========================================================================
+echo "-- 12. STATE snapshot --"
+new_sandbox
+install_repo >/dev/null
+mkws ws12a
+DATE=$(date +%F)
+F12A="$ROOT/ws12a/$DATE.md"
+cat > "$F12A" <<EOF
+# bro — $DATE / ws12a
+
+## 09:00 · t — earlier state
+СОСТОЯНИЕ: подустал, третий час подряд
+СОСТОЯНИЕ: хочет короткие ответы
+СОСТОЯНИЕ: без иронии сегодня
+
+## 09:05 · t — ignored non-marker
+State: pending
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws12a --full >/dev/null 2>&1
+SMD="$ROOT/_state.md"
+assert_file_exists "STATE: _state.md created" "$SMD"
+NSIDES=$(grep -c '^- ' "$SMD" 2>/dev/null || echo 0)
+assert_eq "STATE: three СОСТОЯНИЕ: lines in one record become exactly 3 sides" "$NSIDES" "3"
+assert_contains "STATE: side 1 text present" "$(cat "$SMD")" "подустал, третий час подряд"
+assert_contains "STATE: side 3 text present" "$(cat "$SMD")" "без иронии сегодня"
+assert_contains "STATE: header is the exact required title" "$(head -1 "$SMD")" "# Состояние оператора"
+assert_contains "STATE: ts comment present" "$(cat "$SMD")" "<!-- ts: "
+assert_contains "STATE: do-not-edit-by-hand comment present" "$(cat "$SMD")" "written by bro-harvest; do not edit by hand"
+assert_contains "STATE: записано line names the project" "$(cat "$SMD")" "проект ws12a"
+assert_not_contains "STATE: 'State: pending' (EN Title-case) contributes no side" "$(cat "$SMD")" "pending"
+
+# coordinator follow-up: 'Состояние:' (Capitalized) is deliberately NOT
+# accepted (the real-data measurement showed 8 of 9 real "Состояние:" lines
+# were an old habit of captioning test/build/release status, not the
+# operator's own state) — and, just as deliberately, NOT counted as a
+# near-miss either (same reasoning as EN Title-case: it would flood
+# health.log on every status caption). Only ALL CAPS (СОСТОЯНИЕ/STATE) works.
+new_sandbox
+install_repo >/dev/null
+mkws ws12b
+F12B="$ROOT/ws12b/$DATE.md"
+cat > "$F12B" <<EOF
+# bro — $DATE / ws12b
+
+## 10:00 · t — capitalized, must be ignored
+Состояние: 282 vitest, всё зелёное
+
+## 10:05 · t — plural, must also be ignored
+Состояния: пустое поле, Step 1 of 2
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws12b --full > "$SB/ws12b-out.log" 2>&1
+assert_file_absent "STATE: 'Состояние:' (Capitalized RU) creates no snapshot at all" "$ROOT/_state.md"
+assert_not_contains "STATE: 'Состояние:' is not even counted as a near-miss" "$(cat "$SB/ws12b-out.log")" "near-marker line(s)"
+assert_file_absent "STATE: 'Состояние:'/'Состояния:' write no health.log near-marker line" "$HOME/.claude/bro/health.log"
+
+# newer wins across workspaces; older never regresses the current snapshot
+new_sandbox
+install_repo >/dev/null
+mkws wsold
+mkws wsnew
+YEST=$(date -v-1d +%F 2>/dev/null || date -d yesterday +%F)
+FOLD="$ROOT/wsold/$YEST.md"
+cat > "$FOLD" <<EOF
+# bro — $YEST / wsold
+
+## 08:00 · t — yesterday, older
+STATE: yesterday state, must lose to today
+EOF
+FNEW="$ROOT/wsnew/$DATE.md"
+cat > "$FNEW" <<EOF
+# bro — $DATE / wsnew
+
+## 09:00 · t — today, newer
+STATE: today state, must win
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --all --full >/dev/null 2>&1
+assert_contains "STATE: the newer (today) record wins the snapshot" "$(cat "$ROOT/_state.md")" "today state, must win"
+assert_not_contains "STATE: the older (yesterday) record does not appear" "$(cat "$ROOT/_state.md")" "yesterday state"
+
+# repeating the --full pass over BOTH again must still not regress
+"$BIN/bro-harvest.sh" --root "$ROOT" --all --full >/dev/null 2>&1
+assert_contains "STATE: a repeated --all --full pass over older+newer still keeps the newer snapshot" "$(cat "$ROOT/_state.md")" "today state, must win"
+
+# coordinator follow-up: a busy _state.md lock must not lose the snapshot —
+# the journal line that produced it is already past FROM by the time
+# harvest gets here, so without this a later pass would never see it again.
+# It must land in $ROOT/.state-pending instead, and the NEXT pass (once the
+# lock is free) must write it into _state.md from there.
+new_sandbox
+install_repo >/dev/null
+mkws ws12pending
+FPEND="$ROOT/ws12pending/$DATE.md"
+cat > "$FPEND" <<EOF
+# bro — $DATE / ws12pending
+
+## 11:00 · t — pending test
+STATE: candidate that must survive a busy lock
+EOF
+mkdir -p "$ROOT/_state.md.lock"   # simulate another writer already holding the lock
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws12pending --full >/dev/null 2>&1
+assert_file_absent "STATE pending: busy lock means no _state.md yet" "$ROOT/_state.md"
+assert_file_exists "STATE pending: candidate lands in .state-pending instead of being lost" "$ROOT/.state-pending"
+assert_contains "STATE pending: .state-pending carries the actual side text" "$(cat "$ROOT/.state-pending")" "candidate that must survive a busy lock"
+rmdir "$ROOT/_state.md.lock"   # the other writer is done — lock is free again
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws12pending >/dev/null 2>&1
+assert_contains "STATE pending: the next pass writes the pending candidate into _state.md" "$(cat "$ROOT/_state.md" 2>/dev/null)" "candidate that must survive a busy lock"
+assert_file_absent "STATE pending: .state-pending is cleaned up once written" "$ROOT/.state-pending"
+
+# ===========================================================================
+# 13. INSIGHT registry (v3.8 §6)
+# ===========================================================================
+echo "-- 13. INSIGHT registry --"
+new_sandbox
+install_repo >/dev/null
+mkws ws13
+DATE=$(date +%F)
+F13="$ROOT/ws13/$DATE.md"
+cat > "$F13" <<EOF
+# bro — $DATE / ws13
+
+## 09:00 · t — the real insight
+ИНСАЙТ: маркетплейс модулей для ProductOS — отдельная идея, не путать с правилом
+
+## 09:05 · t — coordinator follow-up: Capitalized and plural must be ignored entirely
+Инсайт: golden-вопросы работают как эталонные фразы, стоит применить и здесь
+Инсайты: два инсайта сразу, тоже должно игнорироваться
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws13 --full > "$SB/ws13-out.log" 2>&1
+INS13="$ROOT/ws13/insights.md"
+assert_file_exists "INSIGHT: insights.md created" "$INS13"
+assert_contains "INSIGHT: 'ИНСАЙТ:' (ALL CAPS) harvested with an i-xxxxxx id" "$(cat "$INS13")" "маркетплейс модулей"
+assert_contains "INSIGHT: line shape matches vocab.md's own pattern (id · body — родился: date)" "$(grep 'маркетплейс' "$INS13")" "— родился: $DATE"
+assert_contains "INSIGHT: register header matches the ensure_register shape" "$(sed -n '1p' "$INS13")" "# ws13 — insights"
+IDCNT13=$(grep -c '^- \*\*i-' "$INS13")
+assert_eq "INSIGHT: exactly one entry — only the ALL-CAPS line counts" "$IDCNT13" "1"
+# coordinator follow-up: 'Инсайт:'/'Инсайты:' (Capitalized RU) are deliberately
+# NOT accepted (same real-data reasoning as СОСТОЯНИЕ) and NOT near-misses either
+assert_not_contains "INSIGHT: 'Инсайт:' (Capitalized) is not harvested" "$(cat "$INS13")" "golden-вопросы работают"
+assert_not_contains "INSIGHT: 'Инсайт:'/'Инсайты:' are not counted as near-misses" "$(cat "$SB/ws13-out.log")" "near-marker line(s)"
+assert_file_absent "INSIGHT: 'Инсайт:'/'Инсайты:' write no health.log near-marker line" "$HOME/.claude/bro/health.log"
+
+# re-harvest (--full) does not duplicate
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws13 --full >/dev/null 2>&1
+LCNT13=$(grep -c '^- \*\*i-' "$INS13")
+assert_eq "INSIGHT: a repeated --full pass does not duplicate entries" "$LCNT13" "1"
+
+# ===========================================================================
+# 14. reviewer #1 fixes (v3.8, coordinator follow-up round 2)
+# ===========================================================================
+echo "-- 14. reviewer fixes: epoch_of/pending/copy-under-lock/suffix/bullet/bold/utf8/notime --"
+
+# §1: epoch_of() must not depend on the wall-clock second it happens to run at
+new_sandbox
+install_repo >/dev/null
+. "$SCRIPTS_DIR/bro-lib.sh"
+E1=$(epoch_of "2026-09-21" "14:32")
+sleep 1.2
+E2=$(epoch_of "2026-09-21" "14:32")
+assert_eq "§1 epoch_of: two calls >1s apart for the identical date+time give the identical number" "$E2" "$E1"
+
+# §4: a journal filename with a topic suffix (real example in this
+# operator's store: cowork/2026-04-22-offerings-banner.md) must be picked
+# up at all, and a STATE marker inside one must get a clean YYYY-MM-DD date
+new_sandbox
+install_repo >/dev/null
+mkws ws14suffix
+DATE=$(date +%F)
+FSUF="$ROOT/ws14suffix/${DATE}-topic-suffix.md"
+cat > "$FSUF" <<EOF
+# bro — $DATE / ws14suffix
+
+## 09:00 · t — suffixed filename
+DECIDED: harvested even though the filename has a topic suffix
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws14suffix --full > "$SB/ws14suffix-out.log" 2>&1
+assert_contains "§4 suffixed filename: a YYYY-MM-DD-topic.md journal is found at all" "$(cat "$SB/ws14suffix-out.log")" "1 journal(s) to read"
+assert_contains "§4 suffixed filename: its marker is harvested" "$(cat "$ROOT/ws14suffix/decisions.md" 2>/dev/null)" "harvested even though the filename has a topic suffix"
+
+mkws ws14suffixstate
+FSUFS="$ROOT/ws14suffixstate/${DATE}-state-test.md"
+cat > "$FSUFS" <<EOF
+# bro — $DATE / ws14suffixstate
+
+## 09:30 · t — suffixed filename with STATE
+STATE: suffixed filename state must still get a clean date
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws14suffixstate --full >/dev/null 2>&1
+TSLINE=$(grep '<!-- ts:' "$ROOT/_state.md" 2>/dev/null)
+assert_contains "§4 suffixed filename: STATE snapshot's date is the clean YYYY-MM-DD" "$TSLINE" " $DATE 09:30 -->"
+assert_not_contains "§4 suffixed filename: ts comment does NOT carry the filename's own topic slug" "$TSLINE" "state-test"
+
+# §5: MRE_NOCOLON must allow the same optional "- " bullet MRE itself does
+new_sandbox
+install_repo >/dev/null
+mkws ws14bullet
+PROJb14=$(proj_dir ws14bullet)
+cd "$PROJb14"
+OUT=$(printf -- '- Правило без двоеточия здесь\n' | "$BIN/bro-append.sh" --workspace ws14bullet --thread t --topic top 2>&1); RC=$?
+cd "$REPO_DIR"
+assert_exit "§5 bulleted colonless marker: bro-append.sh rejects it too (exit 1)" "$RC" "1"
+assert_contains "§5 bulleted colonless marker: rejection names the missing colon, not silently accepted" "$OUT" "missing its ':'"
+
+# §6: INSIGHT's own bold body text must survive — only the KEYWORD's own **
+# wrapping is stripped, never bold the operator wrote in the body
+new_sandbox
+install_repo >/dev/null
+mkws ws14bold
+DATE=$(date +%F)
+FBOLD="$ROOT/ws14bold/$DATE.md"
+cat > "$FBOLD" <<EOF
+# bro — $DATE / ws14bold
+
+## 09:00 · t — bold body must survive
+ИНСАЙТ: **вывод** — пояснение
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws14bold --full >/dev/null 2>&1
+assert_contains "§6 INSIGHT bold: ** around 'вывод' in the body survives into insights.md" "$(cat "$ROOT/ws14bold/insights.md" 2>/dev/null)" "**вывод** — пояснение"
+
+# §7: a near-marker example containing Cyrillic text must not corrupt
+# health.log — the byte-safe cut must never land mid-character
+new_sandbox
+install_repo >/dev/null
+mkws ws14utf8
+DATE=$(date +%F)
+FUTF="$ROOT/ws14utf8/$DATE.md"
+cat > "$FUTF" <<EOF
+# bro — $DATE / ws14utf8
+
+## 09:00 · t — near-miss with long cyrillic text straddling the 60-byte cut
+Решено: этот текст специально длиннее шестидесяти байт, чтобы обрезка попала точно в середину кириллической буквы где-нибудь здесь
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws14utf8 --full >/dev/null 2>&1
+HEALTH="$HOME/.claude/bro/health.log"
+assert_file_exists "§7 UTF-8 safe cut: health.log written for the cyrillic near-miss" "$HEALTH"
+if iconv -f UTF-8 -t UTF-8 < "$HEALTH" > /dev/null 2>&1; then
+  pass "§7 UTF-8 safe cut: health.log round-trips through iconv -f UTF-8 -t UTF-8 cleanly"
+else
+  fail "§7 UTF-8 safe cut: health.log round-trips through iconv -f UTF-8 -t UTF-8 cleanly" "iconv rejected the file — the truncated example likely cut mid-character"
+fi
+
+# §8: a STATE marker under a record with no readable 'HH:MM · …' section
+# header must not vanish silently — same passive health.log line as the
+# other counters
+new_sandbox
+install_repo >/dev/null
+mkws ws14notime
+DATE=$(date +%F)
+FNT="$ROOT/ws14notime/$DATE.md"
+cat > "$FNT" <<EOF
+# bro — $DATE / ws14notime
+STATE: no section header above this line at all
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws14notime --full > "$SB/ws14notime-out.log" 2>&1
+assert_file_absent "§8 STATE no-time: no snapshot written — nothing to date it with" "$ROOT/_state.md"
+assert_contains "§8 STATE no-time: passive counter reports the skip" "$(cat "$SB/ws14notime-out.log")" "STATE marker(s) skipped"
+assert_contains "§8 STATE no-time: health.log records it too" "$(cat "$HOME/.claude/bro/health.log" 2>/dev/null)" "STATE marker(s) skipped"
+
+# ===========================================================================
+# parts — additional per-builder test files land here (tests/parts/*.sh),
+# one file per builder so they don't step on each other. Each part is
+# SOURCED, not run as a subprocess, so it shares this suite's helpers
+# (pass/fail, assert_*, new_sandbox, install_repo, mkws, proj_dir,
+# PASS_N/FAIL_N/FAILED_NAMES) and its checks count toward the one summary
+# below. A missing or empty tests/parts/ directory is a silent no-op.
+# ===========================================================================
+PARTS_DIR="$REPO_DIR/tests/parts"
+if [ -d "$PARTS_DIR" ]; then
+  for p in "$PARTS_DIR"/*.sh; do
+    [ -e "$p" ] || continue   # unexpanded literal glob when the dir has no .sh files in it
+    echo "-- part: $(basename "$p") --"
+    . "$p"
+  done
+fi
 # ===========================================================================
 echo ""
 echo "==== bro regression suite: $PASS_N passed, $FAIL_N failed ===="

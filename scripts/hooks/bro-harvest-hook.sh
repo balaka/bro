@@ -1,11 +1,36 @@
 #!/bin/bash
-# bro v3.6 — SessionStart hook, registered with "async": true.
-# Harvests the current workspace's markers into the registers in the background,
-# so the session-start hook that injects context never waits for it (and can
-# never be cancelled because of it). Emits nothing; harvest is incremental, so a
-# normal run costs well under a second — only the first run after an upgrade, or
-# a --full run, reads every journal.
-# Workspace resolution is the same walk as in bro-session-start.sh.
+# bro v3.8 — harvest hook, registered with "async": true under BOTH
+# SessionStart (all matchers) and, since §3 of the v3.8 plan, Stop — same
+# script, same behavior, whichever event fires it. Harvests the current
+# workspace's markers into the registers in the background, so neither hook
+# that actually injects context / enforces freshness ever waits for it (and
+# can never be cancelled because of it). Emits nothing; harvest is
+# incremental, so a normal run costs well under a second (measured: 0.74s
+# for two fresh records) — only the first run after an upgrade, or a --full
+# run, reads every journal.
+# Workspace resolution is the same walk as bro-session-start.sh and
+# bro-stop-turnstile.sh use — config map (cwd, then ancestors), then a
+# dir-slug walk up to $HOME. This only reads "cwd" and "session_id" from the
+# hook's stdin JSON, and both SessionStart's and Stop's payloads carry those
+# two fields the same way (they differ in fields this script never touches —
+# e.g. SessionStart's "source" vs Stop's "stop_hook_active"), so the exact
+# same code below is already correct for either event with no branch on
+# hook_event_name.
+#
+# v3.8 (§3) — Stop now fires this same hook every turn, not just once per
+# session, so a workspace with a fast back-and-forth chat can trigger a
+# second run before the first finished. A per-workspace, single-attempt
+# lock (mkdir, no spin) below makes a second concurrent trigger for the SAME
+# workspace exit immediately instead of queueing behind the first one or
+# racing it — queueing would only delay a harvest that's already in flight
+# and about to cover the same new lines anyway. Deliberately NOT
+# bro-lib.sh's lock() (which spins ~3s waiting — built for a short critical
+# section like one register write, not "skip if busy"); a whole harvest
+# pass can legitimately run longer than that, and spinning here would just
+# be a slower way to do the queueing this section explicitly rules out.
+# Same 5-minute stale-lock reclaim convention as bro-lib.sh's lock(), so a
+# killed hook process can't wedge every future harvest of this workspace
+# shut.
 
 set -uo pipefail
 
@@ -54,7 +79,8 @@ if [ -z "$WS" ]; then
   done
 fi
 [ -n "$WS" ] || exit 0
-[ -d "$ROOT/$WS" ] || exit 0
+WS_DIR="$ROOT/$WS"
+[ -d "$WS_DIR" ] || exit 0
 
 # an outdated store is migrated first, never harvested into
 SKILL_MAJOR=$(cut -d. -f1 "$HOME/.claude/bro/VERSION" 2>/dev/null || echo 3)
@@ -64,5 +90,20 @@ STORE_MAJOR=$(cat "$ROOT/.version" 2>/dev/null || echo 0)
 HARVEST="$(dirname "$0")/bro-harvest.sh"
 [ -x "$HARVEST" ] || HARVEST="$HOME/.claude/bro/bin/bro-harvest.sh"
 [ -x "$HARVEST" ] || exit 0
+
+# single-attempt lock — see header. Busy and fresh (<5min old) → another
+# trigger for this workspace is already running; exit now, no queueing, no
+# spin. Busy and stale (>5min, a crashed/killed hook) → reclaim and proceed,
+# same threshold bro-lib.sh's lock() uses for the same reason.
+PASSLOCK="$WS_DIR/.harvest-hook.lock"
+if ! mkdir "$PASSLOCK" 2>/dev/null; then
+  if [ -n "$(find "$PASSLOCK" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$PASSLOCK" 2>/dev/null && mkdir "$PASSLOCK" 2>/dev/null; then
+    :   # reclaimed a crash-leftover lock — proceed
+  else
+    exit 0
+  fi
+fi
+trap 'rmdir "$PASSLOCK" 2>/dev/null' EXIT
+
 "$HARVEST" --root "$ROOT" --workspace "$WS" --quiet >/dev/null 2>&1
 exit 0

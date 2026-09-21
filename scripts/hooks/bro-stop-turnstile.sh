@@ -33,7 +33,35 @@ if [ -n "$LIB_DIR" ] && [ -f "$LIB_DIR/bro-lib.sh" ]; then
   . "$LIB_DIR/bro-lib.sh"
 else
   HAS_LIB=0
-  MRE_NOCOLON='^[[:space:]]*([*][*])?(DECIDED|RULE|TAIL|TERM|REJECTED|CLOSED|РЕШЕНИЕ|ПРАВИЛО|ХВОСТ|ТЕРМИН|ОТКАЗ|ЗАКРЫТ)([*][*])?[[:space:]][^:]*$'
+  # v3.8 (§1): kept textually in sync by hand with bro-lib.sh's own
+  # MRE_NOCOLON (two RU writings for the original six keywords; STATE and
+  # INSIGHT added ALL-CAPS-only, no "Состояние"/"Инсайт" writing — see
+  # bro-lib.sh's MRE comment for why; also the optional leading "- " bullet,
+  # added there to match MRE's own shape — this copy had fallen behind that
+  # one-character change until the coordinator caught it, copied verbatim
+  # from bro-lib.sh again here) — this copy only runs when bro-lib.sh itself
+  # couldn't be sourced, so it can't call marker_type() or reference
+  # bro-lib.sh's variable; it has to be a literal, same as before 3.7
+  # extracted the canonical copy out of this file.
+  MRE_NOCOLON='^[[:space:]]*(-[[:space:]]+)?([*][*])?(DECIDED|RULE|TAIL|TERM|REJECTED|CLOSED|STATE|INSIGHT|РЕШЕНИЕ|Решение|ПРАВИЛО|Правило|ХВОСТ|Хвост|ТЕРМИН|Термин|ОТКАЗ|Отказ|ЗАКРЫТ|Закрыт|СОСТОЯНИЕ|ИНСАЙТ)([*][*])?[[:space:]][^:]*$'
+  # v3.8, coordinator fix (re-review after §"pending project"): the same
+  # reasoning as MRE_NOCOLON just above — lock()/unlock() normally come
+  # from bro-lib.sh, sourced above; this is the literal fallback for when
+  # it could not be found, copied verbatim from bro-lib.sh's own copy so
+  # the pending-project race fix below (which needs a real mutex, not just
+  # a regex) still works in degraded mode.
+  lock() {
+    local l="$1.lock" i=0
+    until mkdir "$l" 2>/dev/null; do
+      if [ -n "$(find "$l" -maxdepth 0 -mmin +5 2>/dev/null)" ]; then
+        rmdir "$l" 2>/dev/null && continue
+      fi
+      i=$((i+1)); [ "$i" -gt 60 ] && return 1
+      sleep 0.05
+    done
+    return 0
+  }
+  unlock() { rmdir "$1.lock" 2>/dev/null; return 0; }
   mkdir -p "$HOME/.claude/bro" 2>/dev/null
   echo "$(date '+%F %H:%M')  bro-stop-turnstile: bro-lib.sh not found next to $0 — hash-gated lint disabled, running degraded" >> "$HOME/.claude/bro/health.log" 2>/dev/null
 fi
@@ -62,6 +90,10 @@ SID=$(jget session_id)
 case "$SID" in *[!A-Za-z0-9_-]*) SID="" ;; esac   # used as a file name below — ids are uuids, nothing else passes
 PROMPT_ID=$(jget prompt_id)
 [ -n "$SID" ] && [ -f "$HOME/.claude/bro/off/$SID" ] && exit 0
+# moved up from its old position further down (the v3.6 watchdogs' own
+# section) — the pending-project logic right below needs it too, and it's
+# a pure path string, safe to have this early.
+MARK="$HOME/.claude/bro/started/$SID"
 
 slug_of() { basename "$1" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9-._'; }
 WS=""
@@ -82,7 +114,86 @@ if [ -z "$WS" ]; then
     D=$(dirname "$D")
   done
 fi
-[ -n "$WS" ] || exit 0
+
+JUST_CONNECTED=0
+PROOT=""
+if [ -z "$WS" ]; then
+  # v3.8, operator's own decision — bro-session-start.sh no longer creates
+  # a workspace the moment it sees an unconnected git repo (that gave 16
+  # throwaway projects on the real disk); instead it leaves the candidate
+  # name+root at "$MARK.pending-project" and this hook counts the chat's
+  # own RESPONSES against it, creating the workspace only once real work
+  # has happened. Git itself is never re-run here — only session-open ever
+  # calls it (coordinator was explicit: do not duplicate that logic) — this
+  # is purely reading what that one call already decided.
+  PENDING_FILE="$MARK.pending-project"
+  [ -n "$SID" ] && [ -f "$PENDING_FILE" ] || exit 0
+  PNAME=""
+  IFS=$'\t' read -r PNAME PROOT < "$PENDING_FILE" 2>/dev/null
+  [ -n "$PNAME" ] || exit 0
+
+  THRESHOLD=5
+  if [ "$HAS_JQ" = 1 ]; then
+    THRESHOLD=$(jq -r '.autoCreateAfterAnswers // 5' "$CONFIG" 2>/dev/null)
+    case "$THRESHOLD" in ''|*[!0-9]*) THRESHOLD=5 ;; esac
+  fi
+
+  # count THIS response, deduped by prompt_id: a block anywhere in this
+  # file can make Claude Code re-fire Stop for the SAME prompt (retry),
+  # and that must not count as a second response; a genuinely new
+  # prompt_id always does. $MARK.pending-count: "count<TAB>last_prompt_id".
+  COUNT_FILE="$MARK.pending-count"
+  CUR_COUNT=0; LAST_PID=""
+  if [ -f "$COUNT_FILE" ]; then
+    IFS=$'\t' read -r CUR_COUNT LAST_PID < "$COUNT_FILE" 2>/dev/null
+    case "$CUR_COUNT" in ''|*[!0-9]*) CUR_COUNT=0 ;; esac
+  fi
+  if [ -z "$PROMPT_ID" ] || [ "$PROMPT_ID" != "$LAST_PID" ]; then
+    CUR_COUNT=$((CUR_COUNT + 1))
+    printf '%s\t%s\n' "$CUR_COUNT" "$PROMPT_ID" > "$COUNT_FILE" 2>/dev/null
+  fi
+
+  [ "$CUR_COUNT" -ge "$THRESHOLD" ] 2>/dev/null || exit 0   # below threshold: stay completely silent, no block
+
+  # threshold reached: work has actually happened in this chat — connect
+  # it for real now.
+  #
+  # v3.8, coordinator fix (re-review): two chats in the SAME unconnected
+  # repo can both cross their OWN threshold at almost the same instant.
+  # mkdir -p being idempotent is not enough on its own — without a lock,
+  # BOTH processes can see "the folder doesn't exist yet" before either
+  # has created it, both mkdir (harmless), and both conclude "I must be
+  # the one telling the chat to start the chronicle" — confirmed live: two
+  # genuinely concurrent Stop calls both got the "project is now
+  # connected... start its chronicle" block. The fix is not to lock
+  # around the mkdir alone: checking "does today's journal exist yet"
+  # would NOT discriminate correctly either, since the actual creator
+  # hasn't had a turn to call bro-append.sh yet at this exact moment — a
+  # naive lock around just that check would still let both processes see
+  # "no journal" and both announce. What actually has to be decided
+  # atomically is "did *I* find the folder missing and create it, or was
+  # it already there" — that answer can only be trusted if checked and
+  # acted on under one lock, keyed by the future project path itself
+  # (lock()/unlock() from bro-lib.sh, or the matching fallback copy above
+  # when it could not be sourced). Only the process that finds it missing
+  # sets JUST_CONNECTED and gets the chronicle-start block below; the
+  # other finds it already there, adopts it silently, and falls through
+  # to the ordinary connected-project flow — which runs its own
+  # independent freshness/no-journal check if the creator has not
+  # appended yet, using ITS OWN generic wording, never a second copy of
+  # the "just connected" message for the same event.
+  if lock "$ROOT/$PNAME"; then
+    if [ -d "$ROOT/$PNAME" ]; then
+      WS="$PNAME"   # someone else already won the race under this same lock
+    elif mkdir -p "$ROOT/$PNAME" 2>/dev/null; then
+      WS="$PNAME"
+      JUST_CONNECTED=1
+    fi
+    unlock "$ROOT/$PNAME"
+  fi
+  [ -n "$WS" ] && rm -f "$PENDING_FILE" "$COUNT_FILE" 2>/dev/null
+  [ -n "$WS" ] || exit 0   # lock never obtained, or mkdir failed (permissions) -- stay silent, nothing this chat can fix by being blocked
+fi
 WS_DIR="$ROOT/$WS"
 [ -d "$WS_DIR" ] || exit 0
 
@@ -90,6 +201,10 @@ WS_DIR="$ROOT/$WS"
 [ "$(cat "$ROOT/.version" 2>/dev/null || echo 0)" -ge 3 ] 2>/dev/null || exit 0
 
 TODAY_FILE="$WS_DIR/$(date +%F).md"
+# moved up from this file's old bottom section (still used there too) —
+# the JUST_CONNECTED block right after block() below needs it as well.
+NOWSTAMP="$(date '+%F %H:%M (%A)')"
+APPENDHOW="Bash: \`~/.claude/bro/bin/bro-append.sh --workspace $WS --thread '<work thread>' --topic '<topic with a distinguishing detail>'\` with the section body on stdin (markers DECIDED:/REJECTED:/RULE:/TAIL:/TERM:/CLOSED:, RU aliases РЕШЕНИЕ:/ОТКАЗ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:/ЗАКРЫТ:) — never Write/Edit $TODAY_FILE directly, the write guard denies it"
 
 # one block per (session, prompt); prune day-old guard files
 GUARD_DIR="${TMPDIR:-/tmp}/bro-turnstile"
@@ -113,6 +228,22 @@ block() { # $1 = reason; blocks this stop once and exits
   fi
 }
 
+# v3.8, operator's own decision — this turn is the one where a pending
+# project actually got connected (mkdir just ran, above). If its chronicle
+# doesn't exist yet, starting it IS the very first thing this chat must do:
+# block with the instructions right here, before the ordinary watchdogs
+# below (which check things — a completed harvest pass, a finished
+# session-start — that cannot possibly be true yet for a workspace that is
+# zero seconds old, and would only produce a less specific message for the
+# same underlying situation). If the chronicle already exists — a second
+# chat reached the SAME repo's own threshold after another one already
+# connected it and wrote to it (see tests/parts/c-hooks.sh) — there is
+# nothing special left to do: fall through to the ordinary flow below,
+# same as any other already-connected project.
+if [ "$JUST_CONNECTED" = 1 ] && [ ! -f "$TODAY_FILE" ]; then
+  block "bro [NOW: $NOWSTAMP]: project '$WS' is now connected (root: $PROOT) — start its chronicle now via $APPENDHOW, and fill in $WS_DIR/_workspace.md (what this is / people / pointers) from what you learn in this chat, then finish your reply."
+fi
+
 # v3.6 watchdog — the enforcer's enforcer. bro-session-start.sh leaves a mark per
 # session: "pending" on entry, "ok" once its context is out; bro-precompact.sh
 # sets it back to "pending" before every compaction. A mark still at "pending"
@@ -120,7 +251,6 @@ block() { # $1 = reason; blocks this stop once and exits
 # compaction, and this chat is working without principles and read-order.
 # Recover here: hand the chat the same context, log it, and have the operator
 # told — a dead start must never be silent, whatever else goes wrong below.
-MARK="$HOME/.claude/bro/started/$SID"
 if [ -n "$SID" ] && [ ! -f "$GUARD_W" ] && [ -f "$MARK" ] && [ "$(cat "$MARK" 2>/dev/null)" != "ok" ]; then
   START="$(dirname "$0")/bro-session-start.sh"
   [ -x "$START" ] || START="$HOME/.claude/bro/bin/bro-session-start.sh"
@@ -231,8 +361,8 @@ fi
 
 touch "$GUARD" 2>/dev/null
 
-NOWSTAMP="$(date '+%F %H:%M (%A)')"
-APPENDHOW="Bash: \`~/.claude/bro/bin/bro-append.sh --workspace $WS --thread '<work thread>' --topic '<topic with a distinguishing detail>'\` with the section body on stdin (markers DECIDED:/REJECTED:/RULE:/TAIL:/TERM:/CLOSED:, RU aliases РЕШЕНИЕ:/ОТКАЗ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:/ЗАКРЫТ:) — never Write/Edit $TODAY_FILE directly, the write guard denies it"
+# NOWSTAMP and APPENDHOW are computed once, right after TODAY_FILE, near
+# the top of this file — the JUST_CONNECTED block above needs them too.
 if [ ! -f "$TODAY_FILE" ]; then
   REASON="bro turnstile [NOW: $NOWSTAMP — sync your clock to this]: no journal for today. It's created automatically on the first append — log this session's substance now via $APPENDHOW, then finish your reply."
 elif [ "$fresh" = 0 ]; then
