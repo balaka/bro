@@ -43,7 +43,14 @@ else
   # couldn't be sourced, so it can't call marker_type() or reference
   # bro-lib.sh's variable; it has to be a literal, same as before 3.7
   # extracted the canonical copy out of this file.
-  MRE_NOCOLON='^[[:space:]]*(-[[:space:]]+)?([*][*])?(DECIDED|RULE|TAIL|TERM|REJECTED|CLOSED|STATE|INSIGHT|РЕШЕНИЕ|Решение|ПРАВИЛО|Правило|ХВОСТ|Хвост|ТЕРМИН|Термин|ОТКАЗ|Отказ|ЗАКРЫТ|Закрыт|СОСТОЯНИЕ|ИНСАЙТ)([*][*])?[[:space:]][^:]*$'
+  # v3.9 (§1 of the v3.9 plan): OPEN (new EN canonical spelling, was TAIL)
+  # and ДЕЛО (new RU spelling, ALL-CAPS only, same discipline as
+  # STATE/INSIGHT above) added, brought in verbatim from bro-lib.sh's own
+  # copy — same by-hand sync discipline noted above. TAIL/ХВОСТ/Хвост stay
+  # in the list unchanged: an untranslated store still writes them, and a
+  # colonless line in any of the five open-item spellings must still be
+  # caught here exactly as before.
+  MRE_NOCOLON='^[[:space:]]*(-[[:space:]]+)?([*][*])?((DECIDED|RULE|OPEN|TAIL|TERM|REJECTED|STATE|INSIGHT|CLOSED)|(РЕШЕНИЕ|Решение|ПРАВИЛО|Правило|ДЕЛО|ХВОСТ|Хвост|ТЕРМИН|Термин|ОТКАЗ|Отказ|ЗАКРЫТ|Закрыт|СОСТОЯНИЕ|ИНСАЙТ))([*][*])?[[:space:]][^:]*$'
   # v3.8, coordinator fix (re-review after §"pending project"): the same
   # reasoning as MRE_NOCOLON just above — lock()/unlock() normally come
   # from bro-lib.sh, sourced above; this is the literal fallback for when
@@ -204,7 +211,14 @@ TODAY_FILE="$WS_DIR/$(date +%F).md"
 # moved up from this file's old bottom section (still used there too) —
 # the JUST_CONNECTED block right after block() below needs it as well.
 NOWSTAMP="$(date '+%F %H:%M (%A)')"
-APPENDHOW="Bash: \`~/.claude/bro/bin/bro-append.sh --workspace $WS --thread '<work thread>' --topic '<topic with a distinguishing detail>'\` with the section body on stdin (markers DECIDED:/REJECTED:/RULE:/TAIL:/TERM:/CLOSED:, RU aliases РЕШЕНИЕ:/ОТКАЗ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:/ЗАКРЫТ:) — never Write/Edit $TODAY_FILE directly, the write guard denies it"
+# v3.9 (§5 of the v3.9 plan): same canonical list bro-session-start.sh
+# teaches at chat open — DECIDED:/REJECTED:/RULE:/OPEN:/TERM:/STATE:/
+# INSIGHT:, plus CLOSED <id>: to close one (was .../RULE:/TAIL:/TERM:/
+# CLOSED:...; OPEN replaces TAIL as the canonical open-item spelling, and
+# STATE:/INSIGHT: are now named here too, matching that same list exactly
+# instead of a shorter one drifting from it). Russian aliases are named
+# once, in a single clause, rather than paired keyword-by-keyword as before.
+APPENDHOW="Bash: \`~/.claude/bro/bin/bro-append.sh --workspace $WS --thread '<work thread>' --topic '<topic with a distinguishing detail>'\` with the section body on stdin (markers DECIDED:/REJECTED:/RULE:/OPEN:/TERM:/STATE:/INSIGHT:, and CLOSED <id>: to close one — Russian aliases are also accepted: РЕШЕНИЕ:/ОТКАЗ:/ПРАВИЛО:/ДЕЛО:/ТЕРМИН:/СОСТОЯНИЕ:/ИНСАЙТ:/ЗАКРЫТ:) — never Write/Edit $TODAY_FILE directly, the write guard denies it"
 
 # one block per (session, prompt); prune day-old guard files
 GUARD_DIR="${TMPDIR:-/tmp}/bro-turnstile"

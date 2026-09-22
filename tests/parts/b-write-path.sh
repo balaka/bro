@@ -1,4 +1,4 @@
-# bro v3.8 — tests/parts/b-write-path.sh (Сборщик Б: §2, §7)
+# bro v3.8 — tests/parts/b-write-path.sh (Builder B: §2, §7)
 #
 # Sourced by tests/regress.sh AFTER the main suite's own sections — shares
 # its helpers (pass/fail, assert_*, new_sandbox, install_repo, mkws,
@@ -35,7 +35,7 @@
 #            rejected, with the character-vs-byte boundary actually
 #            exercised in both directions (§7)
 #
-# B8-B12 and B13-B15 below cover проверяющий №2's review round: false
+# B8-B12 and B13-B15 below cover reviewer #2's review round: false
 # positives and bypasses confirmed by actually running them, fixed, and
 # tested here so they can't come back silently.
 #   B8     — bro-write-guard.sh: an UNQUOTED heredoc's prose no longer
@@ -66,7 +66,7 @@
 #            itself, so character-counting is what actually runs
 #            regardless of the caller's own environment (§7 review fix)
 #
-# B16-B17 below cover проверяющий №2's SECOND review round: two more real
+# B16-B17 below cover reviewer #2's SECOND review round: two more real
 # writes confirmed after round 1's fixes landed.
 #   B16    — bro-write-guard.sh: a live $(...)/`...` substitution that
 #            SPANS more than one physical line inside an unquoted heredoc
@@ -79,6 +79,21 @@
 #            which blocks only a relative target whose OWN name is already
 #            journal-shaped) — plus the false positives that must not
 #            follow from being this cautious (§2 review round 2)
+#   B18    — bro-append.sh: v3.9 rename (§1) — OPEN and ДЕЛО, the new
+#            canonical EN/RU open-item spellings, join the one-item rule
+#            exactly like the old TAIL/ХВОСТ/Хвост already did; capitalized
+#            "Дело:" (not ALL-CAPS) stays a non-marker the rule never sees;
+#            the rejection message itself is English scaffolding around
+#            whichever spelling the caller actually typed, never
+#            translated Russian prose
+#   B19    — bro-write-guard.sh: two v3.9 review-round-3 holes, both
+#            present since 3.8.1 and both confirmed by an actual write —
+#            an operator glued to the PRECEDING word, not just the
+#            following one (the same hole B10 closed, now from the other
+#            side); a python/node one-liner naming a BARE relative
+#            journal-shaped filename now resolves it against WG_CWD, the
+#            same way a bare relative shell redirect already does; plus
+#            the false positives that must not follow from either fix
 
 # ===========================================================================
 # B1. write-guard: heredoc BODY text no longer confuses the guard
@@ -135,8 +150,8 @@ assert_contains "B2: piping a read into tee onto the journal still blocks" "$OUT
 # ===========================================================================
 echo "-- B3. write-guard: full write-shape list + python/node --"
 JT_B3="~/bro/wsb1/$(date +%F).md"
-# the plan's own literal must-block list (§2): cp x <журнал>, mv x <журнал>,
-# rm <журнал> — bare, no flags, exactly as written there
+# the plan's own literal must-block list (§2): cp x <journal>, mv x <journal>,
+# rm <journal> — bare, no flags, exactly as written there
 OUT=$(deny_bash "cp $SB/proj/x.txt $JT_B3"); assert_contains "B3: cp onto the journal blocks (plan's own example)" "$OUT" '"decision":"block"'
 OUT=$(deny_bash "mv $SB/proj/x.txt $JT_B3"); assert_contains "B3: mv onto the journal blocks (plan's own example)" "$OUT" '"decision":"block"'
 OUT=$(deny_bash "rm $JT_B3"); assert_contains "B3: bare rm (no flags) of the journal blocks (plan's own example)" "$OUT" '"decision":"block"'
@@ -150,13 +165,13 @@ OUT=$(deny_bash "unlink $JT_B3"); assert_contains "B3: unlink (delete) of the jo
 OUT=$(deny_bash "rm -f $JT_B3"); assert_contains "B3: rm -f (flag before the target) of the journal still blocks" "$OUT" '"decision":"block"'
 # plan's own must-PASS list (§2), not already covered by the main suite's
 # own "-- 7. write guard --" section: sed -n (read) and the literal
-# UNQUOTED "cat > <журнал> <<EOF" must-BLOCK shape (target sits on the
+# UNQUOTED "cat > <journal> <<EOF" must-BLOCK shape (target sits on the
 # introducer line itself, independent of whatever heredoc-stripping does)
 OUT=$(deny_bash "sed -n '1,5p' $JT_B3"); assert_eq "B3: sed -n (read, no -i) on the journal is allowed (plan's own example)" "$OUT" ""
 OUT=$(deny_bash "cat > $JT_B3 <<EOF
 x
 EOF")
-assert_contains "B3: unquoted 'cat > <журнал> <<EOF' blocks (plan's own literal must-block example)" "$OUT" '"decision":"block"'
+assert_contains "B3: unquoted 'cat > <journal> <<EOF' blocks (plan's own literal must-block example)" "$OUT" '"decision":"block"'
 
 JABS_B3="$ROOT/wsb1/$(date +%F).md"
 OUT=$(deny_bash "python3 -c \"open('$JABS_B3','a').write('x')\""); assert_contains "B3: python open(...,'a').write onto the journal blocks" "$OUT" '"decision":"block"'
@@ -211,7 +226,7 @@ JF_B5="$ROOT/wsb5/$(date +%F).md"
 
 OUT=$(printf 'ХВОСТ: а; б; в\n' | "$BIN/bro-append.sh" --workspace wsb5 --thread t --topic s1 2>&1); RC=$?
 assert_exit "B5: ХВОСТ with 2 '; ' items is rejected (exit 1)" "$RC" "1"
-assert_contains "B5: rejection explains one-item-per-line and how to fix it" "$OUT" "one open item per TAIL"
+assert_contains "B5: rejection explains one-item-per-line and how to fix it" "$OUT" "one open item per line"
 assert_file_absent "B5: rejected ХВОСТ wrote zero bytes (no journal created yet)" "$JF_B5"
 
 OUT=$(printf 'TAIL: a; b; c\n' | "$BIN/bro-append.sh" --workspace wsb5 --thread t --topic s2 2>&1); RC=$?
@@ -281,7 +296,7 @@ OUT=$(printf 'ХВОСТ: %s' "$X401" | LC_ALL=en_US.UTF-8 "$BIN/bro-append.sh" 
 assert_exit "B7: exactly 401 characters is rejected" "$RC" "1"
 assert_contains "B7: the 401-char rejection reports it as characters, not bytes, under a UTF-8 locale" "$OUT" "characters"
 
-# v3.8 review fix (проверяющий №2, §8): bro-append.sh now forces
+# v3.8 review fix (reviewer #2, §8): bro-append.sh now forces
 # LC_ALL=en_US.UTF-8 itself for the length check (both the probe and the
 # real measurement), so it counts CHARACTERS regardless of whatever locale
 # the CALLING process/environment happens to have (a chat/hook environment
@@ -539,3 +554,134 @@ OUT=$(deny_bash "pushd /tmp && ls")
 assert_eq "B17: pushd to an unrelated absolute dir, then a harmless command, is allowed" "$OUT" ""
 OUT=$(deny_bash "cd /tmp/somewhere-else && echo x >> $DATE_B17.md")
 assert_eq "B17: cd to a real, unrelated absolute dir (not unknown) still resolves normally and passes" "$OUT" ""
+
+# ===========================================================================
+# B18. bro-append.sh: v3.9 rename — OPEN/ДЕЛО join the one-item rule, old
+#      spellings keep working, capitalized "Дело:" stays a non-marker, and
+#      the rejection message is English scaffolding around the caller's
+#      own marker spelling, never translated Russian prose
+# ===========================================================================
+echo "-- B18. bro-append.sh: OPEN/ДЕЛО join the one-item rule --"
+new_sandbox
+install_repo >/dev/null
+mkws wsb18
+PROJ_B18=$(proj_dir wsb18)
+cd "$PROJ_B18"
+JF_B18="$ROOT/wsb18/$(date +%F).md"
+
+# all five accepted open-item spellings reject the same 2-'; '-item shape
+# identically: marker_type() (bro-lib.sh) folds canonical EN (OPEN),
+# canonical RU (ДЕЛО, ALL CAPS only) and the three old spellings (TAIL,
+# ХВОСТ, Хвост) to the one canonical type OPEN, and this rule checks that
+# canonical type, not a re-spelled keyword list -- so all five must reject
+# identically, the same discipline B5-B7 already proved for the three old
+# spellings alone
+for kw in OPEN ДЕЛО TAIL ХВОСТ Хвост; do
+  OUT=$(printf '%s: a; b; c\n' "$kw" | "$BIN/bro-append.sh" --workspace wsb18 --thread t --topic "reject-$kw" 2>&1); RC=$?
+  assert_exit "B18: '$kw:' with 2 '; ' items is rejected (one-item rule now covers all five OPEN-type spellings)" "$RC" "1"
+  assert_contains "B18: ...and the rejection names the shape in English ('one open item per line')" "$OUT" "one open item per line"
+done
+assert_file_absent "B18: all five rejected attempts above wrote zero bytes (no journal created yet)" "$JF_B18"
+
+# exactly one '; ' still passes for the two NEW spellings, same as it
+# already did for the three old ones (B5)
+OUT=$(printf 'OPEN: one item; with a clarification\n' | "$BIN/bro-append.sh" --workspace wsb18 --thread t --topic openok 2>&1); RC=$?
+assert_exit "B18: OPEN: with exactly 1 '; ' passes" "$RC" "0"
+OUT=$(printf 'ДЕЛО: одно дело; с пояснением\n' | "$BIN/bro-append.sh" --workspace wsb18 --thread t --topic deloOK 2>&1); RC=$?
+assert_exit "B18: ДЕЛО: (ALL CAPS RU) with exactly 1 '; ' passes" "$RC" "0"
+assert_contains "B18: both passing lines actually landed in the journal" "$(cat "$JF_B18" 2>/dev/null)" "одно дело; с пояснением"
+
+# the rejection message echoes back whatever spelling the caller actually
+# typed -- OPEN: is plain ASCII, so its own rejection contains zero
+# Cyrillic bytes anywhere, proving the scaffolding AROUND the echoed
+# spelling is genuinely English prose, not just "no RU keyword happens to
+# be tested here". Same byte-precise check tests/regress.sh's own INDEX.md
+# Cyrillic check uses (BSD grep's bracket-range handling is locale-buggy on
+# this system -- see that check's own comment for the confirmed false
+# positives on plain em-dash/arrow bytes).
+OUT=$(printf 'OPEN: a; b; c\n' | "$BIN/bro-append.sh" --workspace wsb18 --thread t --topic openmsg 2>&1)
+CYR_IN_MSG=$(LC_ALL=C printf '%s' "$OUT" | grep -c $'[\xd0\xd1]' 2>/dev/null)
+[ -n "$CYR_IN_MSG" ] || CYR_IN_MSG=0
+assert_eq "B18: the OPEN: rejection message is fully English (zero Cyrillic bytes)" "$CYR_IN_MSG" "0"
+
+# capitalized "Дело:" (not ALL-CAPS) is not a marker at all -- same
+# treatment as "Состояние:"/"Инсайт:" elsewhere in this project (neither
+# MRE nor MRE_NOCOLON list the mixed-case form) -- so the one-item rule
+# never even sees it, and 2 '; ' items pass straight through unchecked
+OUT=$(printf 'Дело: а; б; в\n' | "$BIN/bro-append.sh" --workspace wsb18 --thread t --topic delocap 2>&1); RC=$?
+assert_exit "B18: capitalized 'Дело:' (not ALL-CAPS) is not a marker, so the one-item rule does not apply (passes)" "$RC" "0"
+assert_contains "B18: the passing 'Дело:' line's own text actually landed in the journal" "$(cat "$JF_B18" 2>/dev/null)" "а; б; в"
+
+cd "$REPO_DIR"
+
+# ===========================================================================
+# B19. write-guard: review-round-3 — operator glued to the PRECEDING word,
+#      and python/node one-liners resolved against WG_CWD like a bare
+#      relative shell redirect already is
+# ===========================================================================
+echo "-- B19. write-guard: operator glued left, pynode cwd-relative --"
+new_sandbox
+install_repo >/dev/null
+mkws wsb19
+DATE_B19=$(date +%F)
+JT_B19="~/bro/wsb19/$DATE_B19.md"
+
+# the coordinator's own reported case, confirmed by an actual write: glued
+# on BOTH sides at once, no space anywhere around the operator
+OUT=$(deny_bash "( echo 'DECIDED: sneaky'>>$JT_B19 )")
+assert_contains "B19: an operator glued to the PRECEDING word (target glued to the operator too) blocks" "$OUT" '"decision":"block"'
+assert_contains "B19: ...and still names the resolved workspace" "$OUT" "workspace 'wsb19'"
+
+# glued only on the left -- the word ends exactly at the operator, so the
+# target is the NEXT (whitespace-separated) word -- exercises the
+# fallback-to-next-word branch of this same fix, not just the "target glued
+# to the operator too" shape above
+OUT=$(deny_bash "echo 'DECIDED: x'>> $JT_B19")
+assert_contains "B19: an operator glued only to the PRECEDING word, target as the next word, blocks" "$OUT" '"decision":"block"'
+
+# other operators glued to preceding text, not just >>
+OUT=$(deny_bash "some-cmd'&>$JT_B19")
+assert_contains "B19: '&>' glued to preceding text blocks" "$OUT" '"decision":"block"'
+OUT=$(deny_bash "some-cmd'>|$JT_B19")
+assert_contains "B19: '>|' glued to preceding text blocks" "$OUT" '"decision":"block"'
+
+# regression: B10's own case (operator glued to the FOLLOWING word only,
+# nothing glued on the left) must still work exactly as before -- the new
+# left-side scan only runs when the prefix case found nothing, so a word
+# already handled by the prefix case is never re-processed
+OUT=$(deny_bash "echo x >>$JT_B19")
+assert_contains "B19: glued-to-next-word only (B10's own case) still blocks (regression)" "$OUT" '"decision":"block"'
+
+# --- pynode_hit: a BARE relative filename, resolved via WG_CWD ---
+mkws wsb19py
+WSDIR_B19PY="$ROOT/wsb19py"
+JABS_B19="$WSDIR_B19PY/$DATE_B19.md"
+
+OUT=$(deny_bash_cwd "python3 -c \"open('$DATE_B19.md','a').write('DECIDED: x')\"" "$WSDIR_B19PY")
+assert_contains "B19: python open(...,'a') with a BARE relative filename blocks when cwd is already inside the workspace" "$OUT" '"decision":"block"'
+
+OUT=$(deny_bash_cwd "node -e \"require('fs').appendFileSync('$DATE_B19.md','x')\"" "$WSDIR_B19PY")
+assert_contains "B19: node appendFileSync with a BARE relative filename blocks when cwd is already inside the workspace" "$OUT" '"decision":"block"'
+
+# regression: the SAME bare relative filename with cwd OUTSIDE the store is
+# still allowed -- this is what was already correct before the fix
+OUT=$(deny_bash_cwd "python3 -c \"open('$DATE_B19.md','a').write('DECIDED: x')\"" "$(proj_dir wsb19py)")
+assert_eq "B19: the same bare relative filename with cwd OUTSIDE the store is still allowed" "$OUT" ""
+
+# regression: the pre-existing FULL-path detection (v3.8) is untouched
+OUT=$(deny_bash "python3 -c \"open('$JABS_B19','a').write('x')\"")
+assert_contains "B19: python open(...,'a') with the full path (pre-existing v3.8 detection) still blocks" "$OUT" '"decision":"block"'
+
+cd "$REPO_DIR"
+
+# --- no NEW false positives from either fix above ---
+new_sandbox
+install_repo >/dev/null
+OUT=$(deny_bash "awk '\$1>5' file")
+assert_eq "B19: awk with a literal comparison operator ('\$1>5') is allowed (no new false positive)" "$OUT" ""
+OUT=$(deny_bash "cmd 2>&1")
+assert_eq "B19: fd duplication (2>&1) is allowed (no new false positive)" "$OUT" ""
+OUT=$(deny_bash "x>/dev/null")
+assert_eq "B19: a glued /dev/null redirect is allowed (no new false positive)" "$OUT" ""
+OUT=$(deny_bash "git log --format='%h>%s'")
+assert_eq "B19: a git --format string containing a literal '>' is allowed (no new false positive)" "$OUT" ""

@@ -125,7 +125,60 @@ epoch_of() {
 # to ONE canonical type — every consumer that behaves differently per
 # marker type switches on THAT, never on the raw matched keyword text, so
 # this alternation is the only place the spelling list itself lives.
-MRE='^[[:space:]]*(-[[:space:]]+)?([*][*])?(DECIDED|RULE|TAIL|TERM|REJECTED|CLOSED|STATE|INSIGHT|РЕШЕНИЕ|Решение|ПРАВИЛО|Правило|ХВОСТ|Хвост|ТЕРМИН|Термин|ОТКАЗ|Отказ|ЗАКРЫТ|Закрыт|СОСТОЯНИЕ|ИНСАЙТ)([-–—][^ :]*)?([*][*])?( [^ :]+)?:'
+#
+# v3.9 (§1 of the v3.9 plan) — English rename: the open-item marker's
+# canonical EN spelling is now OPEN (was TAIL); ДЕЛО is its new RU spelling,
+# ALL-CAPS only, same discipline as STATE/INSIGHT above (no "Дело" writing —
+# see NEAR_MRE's own v3.9 note further below for why it also gets no
+# near-miss entries there). TAIL/ХВОСТ/Хвост are UNCHANGED and still
+# recognized — an untranslated store must keep working exactly as before —
+# so an open item now has FIVE accepted spellings instead of three.
+# marker_type() below folds all five to one canonical token, OPEN (was
+# TAIL) — every consumer that behaves differently per type switches on
+# THAT, so this is the only place any of the five spellings is listed.
+# Coordinator fix (post-3.9 review, round 1): the trailing "one word before
+# the colon" group exists mainly for CLOSED <id>: — every EN keyword used
+# to allow it too, and OPEN is also how an ordinary note starts ("OPEN
+# QUESTIONS: …", "OPEN ISSUES: …" — real chronicle prose): each one hashed
+# to a fake open item with body "QUESTIONS: …" etc. Round 1 simply dropped
+# the word-before-colon group for every EN keyword but CLOSED.
+#
+# Coordinator fix, round 2: round 1 was too blunt — a real audit of the
+# operator's own chronicles found 178 EN markers that DO carry a word
+# before the colon and are all genuine: 117× "DECIDED d-0908-26:" and 52×
+# "TAIL t-0909-2:" (the record's own id, typed by the chat), 9× a
+# parenthetical note — "DECIDED (operator):", "RULE (его):", "REJECTED
+# (02:26):", "TAIL (verify):". Checked against all 169 distinct ids in
+# those chronicles (every one fits) and against ordinary words that must
+# NOT match — "follow-ups", "to-do", "QUESTIONS", "ISSUES", "FACTOR" (none
+# do). So EN keywords (CLOSED included now — its id token is exactly this
+# same shape) allow exactly ONE optional token, but ONLY two narrow shapes:
+#   (a) an id: 1-2 lowercase letters, a dash, then a run of [A-Za-z0-9-]
+#       that contains at least one digit (matches an operator-typed number
+#       like "d-0908-26" or "t-0909-2") — OR a single lowercase letter, a
+#       dash, and exactly six [0-9a-f] characters (bro's own auto-hash ids
+#       like "t-abcdef", which may have no digit in it at all, hence the
+#       separate shape). No {n} interval expressions — BWK awk doesn't
+#       reliably support them — six character classes are spelled out by
+#       hand instead.
+#   (b) a parenthetical note with no space inside — [(][^ )]*[)] — a colon
+#       IS allowed inside it ("(02:26)"): bro-harvest.sh's own HEAD/BODY
+#       split (which cuts at the line's first ':') has its own matching
+#       fix for this, see that file's header.
+# An ordinary word ("QUESTIONS", "follow-ups", "to-do") fits NEITHER shape
+# and is correctly rejected. RU keywords (including ЗАКРЫТ/Закрыт and the
+# new ДЕЛО) are UNCHANGED from round 1 — any single word before the colon,
+# same as always; on five months of real chronicles that never produced a
+# false marker ("Решение владельца:", "Правило подтверждено:" are both
+# genuine markers, not prose) — only the EN false-positive was ever real.
+# Coordinator note, BWK awk gotcha: literal parentheses in the (b) shape
+# are written as the bracket expressions [(] and [)], never \( \) — same
+# "awk -v reprocesses backslash escapes" reason [*][*] exists instead of
+# \*\* elsewhere in this file (confirmed live: with \( \), plain awk -v
+# silently turned the escaped paren into an unescaped GROUPING paren,
+# and "OPEN follow-ups:" started matching MRE — grep -E alone never
+# showed this, only awk did, so both engines must be checked by hand).
+MRE='^[[:space:]]*(-[[:space:]]+)?([*][*])?((DECIDED|RULE|OPEN|TAIL|TERM|REJECTED|STATE|INSIGHT|CLOSED)([-–—][^ :]*)?([*][*])?( ([a-z][a-z]?-[A-Za-z0-9-]*[0-9][A-Za-z0-9-]*|[a-z]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]|[(][^ )]*[)]))?|(РЕШЕНИЕ|Решение|ПРАВИЛО|Правило|ДЕЛО|ХВОСТ|Хвост|ТЕРМИН|Термин|ОТКАЗ|Отказ|ЗАКРЫТ|Закрыт|СОСТОЯНИЕ|ИНСАЙТ)([-–—][^ :]*)?([*][*])?( [^ :]+)?):'
 
 # MRE_NOCOLON — a marker KEYWORD with no colon: the shape harvest's MRE above
 # requires a colon to recognize a marker at all, so a line like "DECIDED chose
@@ -145,7 +198,14 @@ MRE='^[[:space:]]*(-[[:space:]]+)?([*][*])?(DECIDED|RULE|TAIL|TERM|REJECTED|CLOS
 # here, so a bulleted colonless marker ("- Правило без двоеточия") matched
 # neither MRE (no colon) nor this lint (no leading "- ") — invisible to
 # harvest AND unflagged by the very lint built to catch exactly that.
-MRE_NOCOLON='^[[:space:]]*(-[[:space:]]+)?([*][*])?(DECIDED|RULE|TAIL|TERM|REJECTED|CLOSED|STATE|INSIGHT|РЕШЕНИЕ|Решение|ПРАВИЛО|Правило|ХВОСТ|Хвост|ТЕРМИН|Термин|ОТКАЗ|Отказ|ЗАКРЫТ|Закрыт|СОСТОЯНИЕ|ИНСАЙТ)([*][*])?[[:space:]][^:]*$'
+# Coordinator fix: same two-group split as MRE just above, and CLOSED
+# moved into the EN group there in round 2 (its token is now the same
+# restricted id/parenthetical shape as the other EN keywords) — mirrored
+# here for consistency, kept in the same shape either way (there is no
+# word-before-colon group here to restrict either way — this regex only
+# ever matches a COLONLESS line — so the split changes nothing it
+# matches, only how the keyword list reads next to MRE's own).
+MRE_NOCOLON='^[[:space:]]*(-[[:space:]]+)?([*][*])?((DECIDED|RULE|OPEN|TAIL|TERM|REJECTED|STATE|INSIGHT|CLOSED)|(РЕШЕНИЕ|Решение|ПРАВИЛО|Правило|ДЕЛО|ХВОСТ|Хвост|ТЕРМИН|Термин|ОТКАЗ|Отказ|ЗАКРЫТ|Закрыт|СОСТОЯНИЕ|ИНСАЙТ))([*][*])?[[:space:]][^:]*$'
 
 # marker_type() — v3.8 (§1). The one place any accepted spelling of a marker
 # keyword (either RU writing, or the EN ALL-CAPS form) maps to ONE canonical
@@ -167,7 +227,7 @@ marker_type() {
   case "$1" in
     DECIDED|РЕШЕНИЕ|Решение)   echo DECIDED ;;
     RULE|ПРАВИЛО|Правило)      echo RULE ;;
-    TAIL|ХВОСТ|Хвост)          echo TAIL ;;
+    OPEN|ДЕЛО|TAIL|ХВОСТ|Хвост) echo OPEN ;;  # v3.9: canonical type renamed TAIL -> OPEN; ДЕЛО is new (ALL-CAPS only), TAIL/ХВОСТ/Хвост still read
     TERM|ТЕРМИН|Термин)        echo TERM ;;
     REJECTED|ОТКАЗ|Отказ)      echo REJECTED ;;
     CLOSED|ЗАКРЫТ|Закрыт)      echo CLOSED ;;
@@ -221,8 +281,22 @@ marker_type() {
 # STATE/INSIGHT (EN) — an ALL-CAPS Russian word is not how anyone casually
 # captions a status, so that one shape stays low-noise. The original six
 # keywords are unaffected — keep every one of their near-miss forms.
+#
+# v3.9 follow-up: ДЕЛО (the new RU spelling for an open item, §1 of the
+# v3.9 plan) gets the SAME treatment as STATE/INSIGHT just above, and for
+# the same reason, even without a matching real-data audit yet — "дело" is
+# an ordinary, extremely common Russian noun ("my own business", "get to
+# the point", "beside the point"), and "Дело:"/"дело:" at the start of a
+# line is exactly the shape ordinary prose takes, not just a rare status
+# caption. Counting it as a near-miss would flood health.log worse than
+# "Состояние:" ever would have. So: no "Дело:", "дело:", "Дела:" or any
+# other wrong-form/lowercase entry for ДЕЛО in NEAR_MRE below — only the
+# dash-instead-of-colon shape in NEAR_MRE_DASH, same as every other
+# ALL-CAPS-only marker. TAIL/ХВОСТ/Хвост's own existing near-miss entries
+# (ХВОСТЫ/Хвосты/хвост, right below) are unaffected — that family keeps
+# whatever it already had.
 NEAR_MRE='^[[:space:]]*(-[[:space:]]+)?([*][*])?(РЕШЕНО|Решено|РЕШЕНИЯ|Решения|ПРАВИЛА|Правила|ХВОСТЫ|Хвосты|ТЕРМИНЫ|Термины|ОТКАЗЫ|Отказы|ОТКАЗАНО|Отказано|ЗАКРЫТО|Закрыто|решение|отказ|правило|хвост|термин|закрыт)([*][*])?:'
-NEAR_MRE_DASH='^[[:space:]]*(-[[:space:]]+)?([*][*])?(DECIDED|RULE|TAIL|TERM|REJECTED|CLOSED|STATE|INSIGHT|РЕШЕНИЕ|Решение|ОТКАЗ|Отказ|ПРАВИЛО|Правило|ХВОСТ|Хвост|ТЕРМИН|Термин|ЗАКРЫТ|Закрыт|СОСТОЯНИЕ|ИНСАЙТ)([*][*])?[[:space:]]+[-–—]'
+NEAR_MRE_DASH='^[[:space:]]*(-[[:space:]]+)?([*][*])?(DECIDED|RULE|OPEN|TAIL|TERM|REJECTED|CLOSED|STATE|INSIGHT|РЕШЕНИЕ|Решение|ОТКАЗ|Отказ|ПРАВИЛО|Правило|ДЕЛО|ХВОСТ|Хвост|ТЕРМИН|Термин|ЗАКРЫТ|Закрыт|СОСТОЯНИЕ|ИНСАЙТ)([*][*])?[[:space:]]+[-–—]'
 
 # utf8_trunc() — v3.8, coordinator fix (§7). $1 = string  $2 = max bytes.
 # Cuts to AT MOST $2 bytes without leaving a truncated multi-byte UTF-8

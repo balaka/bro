@@ -1,14 +1,15 @@
 #!/bin/bash
 # bro v3.3 — harvest: collect typed markers from daily journals into registers.
 #
-#   DECIDED / РЕШЕНИЕ  → <ws>/decisions.md      TAIL / ХВОСТ  → <ws>/open.md
+#   DECIDED / РЕШЕНИЕ  → <ws>/decisions.md      OPEN / ДЕЛО    → <ws>/open.md
 #   TERM    / ТЕРМИН   → <ws>/vocab.md          RULE / ПРАВИЛО → <root>/_rule-candidates.md
-#   CLOSED  / ЗАКРЫТ   → flips an existing <ws>/open.md tail's [ ] to [x];
+#   CLOSED  / ЗАКРЫТ   → flips an existing <ws>/open.md item's [ ] to [x];
 #                         creates no register record of its own (see v3.7 below)
 #   INSIGHT / ИНСАЙТ   → <ws>/insights.md, numbered i-xxxxxx (see v3.8 below)
 #   STATE   / СОСТОЯНИЕ → <root>/_state.md, ONE store-wide snapshot, newest
 #                          record wins — not per-occurrence like the rest
 #                          (see v3.8 below)
+#   (old TAIL / ХВОСТ / Хвост spellings are still read as OPEN — see v3.9 below)
 #
 # Any accepted spelling of a keyword (EN ALL-CAPS, or RU ALL-CAPS/Capitalized
 # — see bro-lib.sh's MRE) is folded to one canonical type by marker_type()
@@ -98,7 +99,8 @@
 # "CLOSED <id>: <text>" (id = the exact id already printed on that tail's own
 # line in open.md — not optional, and not hashed the way other markers' ids
 # are: nothing here could guess which tail is meant) flips that one line's
-# "- [ ]" to "- [x] … — закрыт <journal-date>: <text>" under lock("$OPEN"),
+# "- [ ]" to "- [x] … — closed <journal-date>: <text>" under lock("$OPEN")
+# (v3.9: was "— закрыт <date>: " — see this file's own v3.9 note below),
 # touching no other byte. Already-[x] is a no-op — idempotent, so a --full
 # pass or a repeated CLOSED for the same id never double-closes. An id this
 # workspace's open.md doesn't have open (wrong id, typo, already closed under
@@ -130,9 +132,38 @@
 #   the pre-existing glue-drop counter already is: one say() line and one
 #   passive ~/.claude/bro/health.log line, never a block.
 #
-# Deterministic, idempotent, append-only. Registers' statuses: open.md's tail
-# checkboxes are flipped by CLOSED:/ЗАКРЫТ: (above, under lock, never by
-# hand); everything else (supersede a decision, accept/reject a rule
+# v3.9 — English rename (§1-§3 of the v3.9 plan). Two independent changes:
+#   Marker: the open-item marker's canonical EN spelling is now OPEN (was
+#   TAIL); ДЕЛО is its new RU spelling, ALL-CAPS only. TAIL/ХВОСТ/Хвост are
+#   UNCHANGED and still read — an untranslated store must keep working
+#   exactly as before — so marker_type() (bro-lib.sh) now folds FIVE
+#   spellings to the one canonical token OPEN, not three. The register id
+#   prefix is untouched (still t-xxxxxx — old records and CLOSED references
+#   to them stay valid).
+#   Storage text: every string this file APPENDS to a register is English
+#   now. The origin signature on a freshly written record is "— from:
+#   <source>" (was "— родилось: " for decisions.md, "— родился: " for
+#   open.md/vocab.md/insights.md/_rule-candidates.md); a CLOSED write
+#   appends "— closed <date>: <text>" (was "— закрыт <date>: "); every
+#   ensure_register() header/description below is English; write_state_
+#   snapshot()'s _state.md is English top to bottom. Reading stays
+#   bilingual on purpose, so an operator who never runs the register
+#   converter (scripts/bro-translate-registers.sh) keeps working: the
+#   find_glued_dup_*() dedup helpers below (3.8.1) accept "— from: " as
+#   well as both old RU forms, and CLOSED's own line-finder matches an
+#   open item by id alone — it doesn't care what signature terminates that
+#   line — so it can flip and annotate an old, never-translated line just
+#   as well as a new one. INDEX.md's own generation (bottom of this file)
+#   is entirely English, including its principle-field scan, which now
+#   accepts the RU field names (Категория/Правило/Родилось/Исполнение/
+#   Границы/Пересмотр) alongside their EN counterparts (Category/Rule/
+#   Origin/Enforcement/Bounds/Review) for review-date purposes —
+#   _principles.md itself is the operator's own text and this file never
+#   rewrites it.
+#
+# Deterministic, idempotent, append-only. Registers' statuses: open.md's
+# item checkboxes are flipped by CLOSED:/ЗАКРЫТ: (above, under lock, never
+# by hand); everything else (supersede a decision, accept/reject a rule
 # candidate) is still managed by hand.
 # Usage: bro-harvest.sh [--root <dir>] [--workspace <name> | --all] [--full] [--quiet]
 
@@ -177,7 +208,10 @@ say() { [ "$QUIET" = 1 ] || echo "[bro-harvest] $*"; }
 
 ensure_register() { # call ONLY under lock($1)
   [ -f "$1" ] && return
-  printf '# %s\n\n> %s\n> Пополняется жатвой (bro-harvest) из дневников; статусы правятся руками. Записи не удалять — замещать.\n\n' "$2" "$3" > "$1"
+  # v3.9 (§2): both lines are now English — $3 is the register-specific
+  # first line (call sites below), the second is the one fixed sentence
+  # shared by all five registers, same shape the RU original had.
+  printf '# %s\n\n> %s\n> Filled automatically from the daily journals (bro-harvest.sh); statuses are edited by hand. Never delete entries — supersede them.\n\n' "$2" "$3" > "$1"
 }
 
 # trim_ws() — v3.8.1. $1 = string -> the same string with leading and
@@ -212,7 +246,9 @@ trim_ws() {
 # case uses bodies that begin differently, which is what real distinct
 # content looks like.
 # $1=register file $2=base id (before any x<hash> suffix) $3=SRC
-# attribution (exactly what would go after "— родилось: "/"— родился: ")
+# attribution (exactly what would go after "— from: ", or the old
+# "— родилось: "/"— родился: " — v3.9, both forms are still read so an
+# untranslated store's existing records keep matching)
 # $4=the NEW body, ALREADY trim_ws()-ed by the caller. Prints the existing
 # id and returns 0 on a match (same base id, same SRC, one trimmed body a
 # prefix of the other); prints nothing and returns 1 otherwise — including
@@ -224,7 +260,19 @@ find_glued_dup_multiline() {
     [ -n "$ln" ] || continue
     id=$(sed -n "${ln}p" "$reg" | sed -E 's/^### ([^ ]+).*/\1/')
     hdrbody=$(trim_ws "$(sed -n "$((ln+1))p" "$reg")")
-    hdrsrc=$(sed -n "$((ln+2))p" "$reg" | sed -E 's/^— родилось: //')
+    # v3.9: a record written before the English rename carries "— родилось: ";
+    # one written after carries "— from: " — strip whichever is actually there.
+    # Coordinator check: this three-LINE record shape (header / body / sig)
+    # does NOT have find_glued_dup_oneline()'s sibling bug just above — body
+    # and signature are two separate physical lines here, never split out of
+    # one combined string by searching for "— from: " as a delimiter, so a
+    # body that itself happens to contain that literal substring (own words,
+    # e.g. "chose Postgres — from: our old MySQL setup") cannot shift where
+    # the cut lands. hdrbody is always exactly line ln+1, hdrsrc is always
+    # whatever follows the ANCHORED ("^") prefix on line ln+2, which by
+    # construction (this file's own printf writers) is never anything but
+    # "— from: $SRC" / "— родилось: $SRC" in full.
+    hdrsrc=$(sed -n "$((ln+2))p" "$reg" | sed -E 's/^— родилось: //; s/^— from: //')
     [ "$hdrsrc" = "$src" ] || continue
     case "$newbody" in
       "$hdrbody"*) [ -n "$hdrbody" ] && { echo "$id"; return 0; } ;;
@@ -243,8 +291,27 @@ find_glued_dup_oneline() {
     line=$(sed -n "${ln}p" "$reg")
     id=$(printf '%s' "$line" | sed -E 's/^- \[.\] ([^ (]+).*/\1/')
     rest=$(printf '%s' "$line" | sed -E 's/^- \[.\] [^·]*· //')
-    hdrsrc="${rest#*— родился: }"
-    hdrbody=$(trim_ws "${rest% — родился: *}")
+    # v3.9: a record written before the English rename carries "— родился: ";
+    # one written after carries "— from: " — try the old form first, and
+    # only if it genuinely wasn't there (the expansion left $rest untouched)
+    # fall back to the new one.
+    # Coordinator fix: the operator's own BODY text can itself legally
+    # contain the literal "— from: "/"— родился: " substring (real example:
+    # "renamed — from: dash" as a body, followed by the record's REAL
+    # "— from: 2026-09-01 · ..." signature) — body and signature must be
+    # cut at the SAME point, the LAST occurrence, or the two ends up split
+    # at two DIFFERENT occurrences and hdrsrc/hdrbody stop being a matched
+    # pair (confirmed live: single '#'/'%' already agreed on the last
+    # occurrence for the suffix form but NOT the prefix form, so hdrsrc
+    # picked up the first, unrelated occurrence's tail while hdrbody
+    # correctly used the last one). '##' (longest-prefix-match strip), not
+    # '#', is what walks a glob past every earlier occurrence to the last
+    # one — same "last occurrence" '%' (single) already gives for a suffix.
+    hdrsrc="${rest##*— родился: }"
+    [ "$hdrsrc" = "$rest" ] && hdrsrc="${rest##*— from: }"
+    hdrbody="${rest% — родился: *}"
+    [ "$hdrbody" = "$rest" ] && hdrbody="${rest% — from: *}"
+    hdrbody=$(trim_ws "$hdrbody")
     [ "$hdrsrc" = "$src" ] || continue
     case "$newbody" in
       "$hdrbody"*) [ -n "$hdrbody" ] && { echo "$id"; return 0; } ;;
@@ -292,10 +359,10 @@ write_state_snapshot() {
   if [ "$ep" -gt "$cur" ] 2>/dev/null; then
     tmp=$(mktemp "$ROOT/.state.XXXXXX" 2>/dev/null || echo "$ROOT/.state.$$")
     {
-      echo "# Состояние оператора"
+      echo "# Operator state"
       printf '<!-- ts: %s %s %s -->\n' "$ep" "$d" "$t"
       echo "<!-- written by bro-harvest; do not edit by hand -->"
-      printf 'записано: %s %s · проект %s · «%s»\n' "$d" "$t" "$ws" "$sec"
+      printf 'recorded: %s %s · project %s · «%s»\n' "$d" "$t" "$ws" "$sec"
       printf '%s\n' "$sides" | while IFS= read -r side; do
         [ -n "$side" ] && printf -- '- %s\n' "$side"
       done
@@ -419,7 +486,7 @@ harvest_ws() {
     # DATE10: the first 10 characters of the filename — always a clean
     # "YYYY-MM-DD" even when the file has a topic suffix (DATE above does
     # not: for "2026-04-22-offerings-banner.md" it's the whole
-    # "2026-04-22-offerings-banner", fine for the "родилось: …" attribution
+    # "2026-04-22-offerings-banner", fine for the "— from: …" attribution
     # text every OTHER register already prints, but STATE's epoch_of()
     # (bro-lib.sh) below needs an exact date, not a slug — v3.8 (§4).
     DATE10="${B:0:10}"
@@ -540,8 +607,26 @@ harvest_ws() {
       # bullet-stripped line as-is, never touched by the ** strip below.
       local CLEAN KW HEAD TOK ID BODY H CH OLN OLDLINE NEWLINE MISS OTMP BASEID DUPID
       CLEAN=$(printf '%s' "$LINE" | sed -E 's/^[[:space:]]*(-[[:space:]]+)?//')
-      HEAD="${CLEAN%%:*}"                      # keyword [+ optional token], ** (if any) still in place
-      BODY="${CLEAN#*:}"; BODY="${BODY# }"      # everything after the first colon — untouched, own ** intact
+      # Coordinator fix (round 2): an EN keyword's optional token may be a
+      # parenthetical note that itself contains a colon ("(02:26)") — the
+      # naive "split on the line's FIRST colon" below is wrong for exactly
+      # that shape (an id-shaped token can't contain a colon — its own
+      # character classes exclude "(" and ":" — and a RU word-token can't
+      # either — bro-lib.sh's own MRE gives it [^ :]+, colon excluded by
+      # construction — so this is the only shape where the first colon in
+      # the line isn't the marker's own). Detected by keyword = Latin
+      # letters only (so a RU keyword, whose token can hold a bare "("
+      # without this special-casing ever kicking in, never matches here)
+      # followed by a single space and a "(...)" with no internal space.
+      # When it matches, split right after THAT closing paren instead.
+      if printf '%s' "$CLEAN" | grep -qE '^([*][*])?[A-Za-z]+([-–—][^ :(]*)?([*][*])? [(][^ )]*[)]:'; then
+        HEAD=$(printf '%s' "$CLEAN" | sed -E 's/^(([*][*])?[A-Za-z]+([-–—][^ :(]*)?([*][*])? [(][^ )]*[)]):.*/\1/')
+        BODY=$(printf '%s' "$CLEAN" | sed -E 's/^([*][*])?[A-Za-z]+([-–—][^ :(]*)?([*][*])? [(][^ )]*[)]://')
+      else
+        HEAD="${CLEAN%%:*}"                      # keyword [+ optional token], ** (if any) still in place
+        BODY="${CLEAN#*:}"
+      fi
+      BODY="${BODY# }"      # everything after the marker's own colon — untouched, own ** intact
       HEAD=$(printf '%s' "$HEAD" | sed -E 's/\*\*//g')   # now safe: only the keyword side loses its **
       KW="${HEAD%% *}"
       KW="${KW%%-*}"; KW="${KW%%–*}"; KW="${KW%%—*}"   # strip «-кандидат»-style suffixes
@@ -559,24 +644,32 @@ harvest_ws() {
       if printf '%s' "$TOK" | grep -qE '^[A-Za-z]-[A-Za-z0-9-]+$'; then
         ID="$TOK"
       else
-        [ -n "$TOK" ] && BODY="$TOK: $BODY"    # noise token was not an id — keep it in the body
+        # Coordinator fix (round 2): a parenthetical token ("(operator)",
+        # "(02:26)") is a short annotation, not body content — unlike any
+        # OTHER non-id token (a RU descriptive word, say), it is NOT folded
+        # back into the body; the record's body is exactly what follows the
+        # marker's own colon. The marker still gets the usual hash-based id
+        # below. Nothing is lost: the raw journal line is append-only and
+        # keeps the note verbatim regardless of what the register shows.
+        printf '%s' "$TOK" | grep -qE '^[(][^ )]*[)]$' \
+          || { [ -n "$TOK" ] && BODY="$TOK: $BODY"; }    # noise token was not an id — keep it in the body
         case "$KC" in
           DECIDED)  ID="d-$H" ;;
           RULE)     ID="r-$H" ;;
-          TAIL)     ID="t-$H" ;;
+          OPEN)     ID="t-$H" ;;  # v3.9: type renamed TAIL -> OPEN; id prefix stays t- (existing ids/CLOSED refs are untouched)
           TERM)     ID="v-$H" ;;
           REJECTED) ID="o-$H" ;;
-          CLOSED)   ID="c-$H" ;;  # no real tail id given — unresolvable; routes to CLOSE-MISS below
+          CLOSED)   ID="c-$H" ;;  # no real open-item id given — unresolvable; routes to CLOSE-MISS below
           STATE)    ID="s-$H" ;;  # unused by STATE's own branch below (no per-occurrence register) — computed anyway to keep this switch's shape uniform
           INSIGHT)  ID="i-$H" ;;
         esac
       fi
-      local SRC="$DATE · «${SEC:-без секции}»"
+      local SRC="$DATE · «${SEC:-no section}»"
 
       case "$KC" in
         REJECTED)
           lock "$DEC" || { : > "$RUN/fail"; continue; }
-          ensure_register "$DEC" "$WS — decisions" "Реестр решений: выбрали/вместо/почему. Устаревшее — [superseded by <id>], не стирать."
+          ensure_register "$DEC" "$WS — decisions" "Decision register: what was chosen, instead of what, and why. Obsolete entries are marked [superseded by <id>] — never deleted."
           if grep -q "^### ${ID} (" "$DEC"; then
             if ! grep -A1 "^### ${ID} (" "$DEC" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
               BASEID="$ID"
@@ -586,19 +679,19 @@ harvest_ws() {
               else
                 ID="${ID}x${CH}"
                 grep -q "^### ${ID} (" "$DEC" || {
-                  printf '### %s (%s) [rejected]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
+                  printf '### %s (%s) [rejected]\n%s\n— from: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
                   say "COLLISION: id reused — wrote rejection $ID → $WS/decisions.md"; }
               fi
             fi
           else
-            printf '### %s (%s) [rejected]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
+            printf '### %s (%s) [rejected]\n%s\n— from: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
             say "+ rejection $ID → $WS/decisions.md"
           fi
           unlock "$DEC"
           ;;
         DECIDED)
           lock "$DEC" || { : > "$RUN/fail"; continue; }
-          ensure_register "$DEC" "$WS — decisions" "Реестр решений: выбрали/вместо/почему. Устаревшее — [superseded by <id>], не стирать."
+          ensure_register "$DEC" "$WS — decisions" "Decision register: what was chosen, instead of what, and why. Obsolete entries are marked [superseded by <id>] — never deleted."
           if grep -q "^### ${ID} (" "$DEC"; then
             # same id already in register — same record, or a collision with different content?
             if ! grep -A1 "^### ${ID} (" "$DEC" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
@@ -615,19 +708,19 @@ harvest_ws() {
               else
                 ID="${ID}x${CH}"
                 grep -q "^### ${ID} (" "$DEC" || {
-                  printf '### %s (%s) [active]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
+                  printf '### %s (%s) [active]\n%s\n— from: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
                   say "COLLISION: id reused with different content — wrote decision $ID → $WS/decisions.md"; }
               fi
             fi
           else
-            printf '### %s (%s) [active]\n%s\n— родилось: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
+            printf '### %s (%s) [active]\n%s\n— from: %s\n\n' "$ID" "$DATE" "$BODY" "$SRC" >> "$DEC"
             say "+ decision $ID → $WS/decisions.md"
           fi
           unlock "$DEC"
           ;;
-        TAIL)
+        OPEN)
           lock "$OPEN" || { : > "$RUN/fail"; continue; }
-          ensure_register "$OPEN" "$WS — open items" "Хвосты и открытые вопросы. Закрытие — маркером CLOSED:/ЗАКРЫТ: в дневнике (жатва проставляет [x]), не руками. Жатва закрытые не переоткрывает."
+          ensure_register "$OPEN" "$WS — open items" "Open items: promised and not yet done. Close one with a \`CLOSED <id>: <what closed it>\` line in the journal."
           if grep -q "^- \[.\] ${ID} ·" "$OPEN"; then
             if ! grep "^- \[.\] ${ID} ·" "$OPEN" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
               BASEID="$ID"
@@ -637,13 +730,13 @@ harvest_ws() {
               else
                 ID="${ID}x${CH}"
                 grep -q "^- \[.\] ${ID} ·" "$OPEN" || {
-                  printf -- '- [ ] %s · %s — родился: %s\n' "$ID" "$BODY" "$SRC" >> "$OPEN"
-                  say "COLLISION: id reused with different content — wrote tail $ID → $WS/open.md"; }
+                  printf -- '- [ ] %s · %s — from: %s\n' "$ID" "$BODY" "$SRC" >> "$OPEN"
+                  say "COLLISION: id reused with different content — wrote open item $ID → $WS/open.md"; }
               fi
             fi
           else
-            printf -- '- [ ] %s · %s — родился: %s\n' "$ID" "$BODY" "$SRC" >> "$OPEN"
-            say "+ tail $ID → $WS/open.md"
+            printf -- '- [ ] %s · %s — from: %s\n' "$ID" "$BODY" "$SRC" >> "$OPEN"
+            say "+ open item $ID → $WS/open.md"
           fi
           unlock "$OPEN"
           ;;
@@ -663,7 +756,7 @@ harvest_ws() {
             # literal brackets — "- [ ]" would then match "- " + one char from
             # {space}, never the real 5-char prefix, leaving OLDLINE untouched
             # and duplicating it after "- [x]". Escape both brackets.
-            NEWLINE="- [x]${OLDLINE#- \[ \]} — закрыт $DATE: $BODY"
+            NEWLINE="- [x]${OLDLINE#- \[ \]} — closed $DATE: $BODY"
             OTMP=$(mktemp "$WS_DIR/.open.XXXXXX" 2>/dev/null || echo "$WS_DIR/.open.$$")
             # BSD head rejects "-n 0" (macOS: "illegal line count") — skip the
             # call outright when the matched line is line 1, instead of relying
@@ -689,27 +782,27 @@ harvest_ws() {
           ;;
         TERM)
           lock "$VOC" || { : > "$RUN/fail"; continue; }
-          ensure_register "$VOC" "$WS — vocabulary" "Словарь: термин — значение, словами оператора, с датой рождения."
+          ensure_register "$VOC" "$WS — vocabulary" "Terms and what they mean, in the operator's own words."
           grep -q "^- \*\*${ID}\*\*" "$VOC" || {
-            printf -- '- **%s** · %s — родился: %s\n' "$ID" "$BODY" "$SRC" >> "$VOC"
+            printf -- '- **%s** · %s — from: %s\n' "$ID" "$BODY" "$SRC" >> "$VOC"
             say "+ term $ID → $WS/vocab.md"; }
           unlock "$VOC"
           ;;
         INSIGHT)
           # v3.8 (§6): same shape and dedup as TERM/vocab.md above — one id
           # per occurrence, append-only, "already have this id" is a no-op
-          # (no collision-disambiguation dance like DECIDED/TAIL/RULE do;
+          # (no collision-disambiguation dance like DECIDED/OPEN/RULE do;
           # spec is explicit that insights.md mirrors vocab.md exactly).
           lock "$INS" || { : > "$RUN/fail"; continue; }
-          ensure_register "$INS" "$WS — insights" "Закономерности, идеи, новые подходы к работе. Пополняется жатвой; подъём в принципы — отдельно (3.9), не здесь."
+          ensure_register "$INS" "$WS — insights" "Patterns, ideas and new approaches worth keeping."
           grep -q "^- \*\*${ID}\*\*" "$INS" || {
-            printf -- '- **%s** · %s — родился: %s\n' "$ID" "$BODY" "$SRC" >> "$INS"
+            printf -- '- **%s** · %s — from: %s\n' "$ID" "$BODY" "$SRC" >> "$INS"
             say "+ insight $ID → $WS/insights.md"; }
           unlock "$INS"
           ;;
         RULE)
           lock "$RCAND" || { : > "$RUN/fail"; continue; }
-          ensure_register "$RCAND" "rule candidates (global queue)" "Кандидаты в _principles.md. В принципы — только после подтверждения оператора: [x] принят / [-] отклонён."
+          ensure_register "$RCAND" "Rule candidates (global queue)" "Candidates for _principles.md. A rule enters the principles only with the operator's word: [x] accepted / [-] rejected."
           if grep -q "^- \[.\] ${ID} (" "$RCAND"; then
             if ! grep "^- \[.\] ${ID} (" "$RCAND" | grep -qF "$(printf '%s' "$BODY" | cut -c1-50)"; then
               BASEID="$ID"
@@ -719,12 +812,12 @@ harvest_ws() {
               else
                 ID="${ID}x${CH}"
                 grep -q "^- \[.\] ${ID} (" "$RCAND" || {
-                  printf -- '- [ ] %s (%s) · %s — родился: %s\n' "$ID" "$WS" "$BODY" "$SRC" >> "$RCAND"
+                  printf -- '- [ ] %s (%s) · %s — from: %s\n' "$ID" "$WS" "$BODY" "$SRC" >> "$RCAND"
                   say "COLLISION: id reused with different content — wrote rule-candidate $ID"; }
               fi
             fi
           else
-            printf -- '- [ ] %s (%s) · %s — родился: %s\n' "$ID" "$WS" "$BODY" "$SRC" >> "$RCAND"
+            printf -- '- [ ] %s (%s) · %s — from: %s\n' "$ID" "$WS" "$BODY" "$SRC" >> "$RCAND"
             say "+ rule-candidate $ID → _rule-candidates.md"
           fi
           unlock "$RCAND"
@@ -740,7 +833,7 @@ harvest_ws() {
           # $RUN is this pass's own private mktemp'd dir, not a shared file.
           # DATE10, not DATE (§4, coordinator fix): a suffixed filename
           # ("2026-04-22-offerings-banner.md") makes DATE the whole slug —
-          # fine for the "родилось: …" text other registers print, wrong
+          # fine for the "— from: …" text other registers print, wrong
           # for epoch_of() below, which needs a plain YYYY-MM-DD.
           printf '%s\t%s\t%s\n' "$DATE10" "$SEC" "$(printf '%s' "$BODY" | tr '\t' ' ')" >> "$RUN/state-lines"
           ;;
@@ -870,7 +963,7 @@ if lock "$ROOT/INDEX.md"; then
   {
     echo "# bro index"
     echo ""
-    echo "| workspace | files | last entry | open tails |"
+    echo "| workspace | files | last entry | open items |"
     echo "|---|---|---|---|"
     for D in "$ROOT"/*/; do
       B=$(basename "$D")
@@ -881,25 +974,30 @@ if lock "$ROOT/INDEX.md"; then
       echo "| $B | $NF | ${LAST:-—} | $NOPEN |"
     done
     TODAY=$(date +%F)
+    # v3.9 (§3): _principles.md is the operator's own text and is never
+    # rewritten here — but it may use either the RU field names or the EN
+    # ones (scripts/bro-translate-registers.sh translates the register
+    # boilerplate, never this file), so the review-date field is matched
+    # under either name. INDEX.md's OWN output stays English regardless.
     DUE=$(awk -v today="$TODAY" '
       /^### / { sub(/^### /, ""); hdr = $0 }
-      /\*\*Пересмотр:\*\*/ { if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) { d=substr($0,RSTART,RLENGTH); if (d<=today) printf "- %s — срок был %s\n", hdr, d } }
+      /\*\*(Пересмотр|Review):\*\*/ { if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) { d=substr($0,RSTART,RLENGTH); if (d<=today) printf "- %s — was due %s\n", hdr, d } }
     ' "$ROOT/_principles.md" 2>/dev/null)
     echo ""
     echo "## Reviews due"
     if [ -n "$DUE" ]; then
       echo "$DUE"
       echo ""
-      echo "Пересмотр: правило живо и верно → продлить дату (интервал больше прошлого); устарело → заместить записью со ссылкой."
+      echo "Review: rule still true and worth keeping → push the date out (a longer interval than last time); stale → supersede it with a record that links back to it."
     else
-      echo "_(нет — ближайшие даты внутри _principles.md)_"
+      echo "_(none — the next review dates are inside _principles.md)_"
     fi
     PWARN=$(awk '
-      function flush() { if (blk != "") { m=""; if (!hasR) m=m" Правило"; if (!hasB) m=m" Родилось"; if (!hasP) m=m" Пересмотр"; if (m != "") printf "- %s — нет поля:%s\n", blk, m } }
+      function flush() { if (blk != "") { m=""; if (!hasR) m=m" Rule"; if (!hasB) m=m" Origin"; if (!hasP) m=m" Review"; if (m != "") printf "- %s — missing field:%s\n", blk, m } }
       /^### / { flush(); blk=$0; sub(/^### /, "", blk); hasR=0; hasP=0; hasB=0 }
-      /\*\*Правило:\*\*/ { hasR=1 }
-      /\*\*Пересмотр:\*\*/ { hasP=1 }
-      /\*\*Родилось:\*\*/ { hasB=1 }
+      /\*\*(Правило|Rule):\*\*/ { hasR=1 }
+      /\*\*(Пересмотр|Review):\*\*/ { hasP=1 }
+      /\*\*(Родилось|Origin):\*\*/ { hasB=1 }
       END { flush() }
     ' "$ROOT/_principles.md" 2>/dev/null)
     if [ -n "$PWARN" ]; then

@@ -27,7 +27,7 @@
 # strip_heredocs' own comment for the two conditions); an unsafe heredoc is
 # deliberately left FOR the scan below to see, never silently trusted.
 #
-# v3.8 review fixes (проверяющий №2, confirmed by running each one) —
+# v3.8 review fixes (reviewer #2, confirmed by running each one) —
 # five more precision gaps in the same direction as above:
 #  - an UNQUOTED heredoc (<<EOF) was left fully unstripped, so ordinary
 #    prose in its body ("Do not run: echo hi >> journal") false-positived
@@ -94,7 +94,7 @@ deny() { # $1 = reason
 # the exact bro-append.sh invocation, shown in full in every journal-write
 # denial below — a chat needs no other context to recover from this
 APPEND_HELP() { # $1 = workspace name (may be empty — still teaches the shape)
-  printf "Append instead, via Bash (stdin = section body; put each marker DECIDED:/REJECTED:/RULE:/TAIL:/TERM:/CLOSED: — RU aliases equally valid — on its own line, bro-append.sh inserts the blank line after it for you):\n~/.claude/bro/bin/bro-append.sh --workspace %s --thread '<work thread>' --topic '<topic with a distinguishing detail>' <<'EOF'\n<free text and/or marker lines>\nEOF\nIt stamps HH:MM from the real clock itself (no time argument exists), validates the body before writing a byte, and appends atomically under a lock — no interleaving with other chats." "${1:-<workspace>}"
+  printf "Append instead, via Bash (stdin = section body; put each marker DECIDED:/REJECTED:/RULE:/OPEN:/TERM:/CLOSED: on its own line — Russian aliases are also accepted — РЕШЕНИЕ, ОТКАЗ, ПРАВИЛО, ДЕЛО, ТЕРМИН, ЗАКРЫТ, СОСТОЯНИЕ, ИНСАЙТ — bro-append.sh inserts the blank line after it for you):\n~/.claude/bro/bin/bro-append.sh --workspace %s --thread '<work thread>' --topic '<topic with a distinguishing detail>' <<'EOF'\n<free text and/or marker lines>\nEOF\nIt stamps HH:MM from the real clock itself (no time argument exists), validates the body before writing a byte, and appends atomically under a lock — no interleaving with other chats." "${1:-<workspace>}"
 }
 
 # a shared daily journal's own filename shape, one level under the store:
@@ -422,11 +422,18 @@ strip_heredocs() {
 # review fix §3: >>, >, >|, 1>, 2>, &> are all matched as a PREFIX of the
 # word, and whatever follows in that same word is tried as the target
 # first, falling back to the next word when nothing follows). An operator
-# glued onto the PRECEDING word ("echo x>>FILE", no space at all before
-# it either) is still not recognized — the same "narrow heuristic"
-# character as everywhere else in this file; every real command in this
-# project's own scripts/tests, and every example in the plan, leaves at
-# least a space before the operator.
+# glued onto the PRECEDING word too ("echo 'x'>>FILE", no space on either
+# side — v3.9 fix: confirmed by an actual write, `( echo 'DECIDED:
+# sneaky'>>~/bro/proj1/2026-09-22.md )`) is now recognized the same way,
+# from the other side: whatever follows the LAST operator occurrence
+# inside a word that does NOT start with one is tried as the target first,
+# falling back to the next word when nothing follows — same precedence,
+# same operator set, same fallback shape as the prefix case just above,
+# only entered when the prefix case found nothing (so a word is never
+# double-reported). journal_target()'s own precision (only an exact
+# "<workspace>/YYYY-MM-DD.md" shape counts) is what keeps this from
+# false-blocking ordinary text that merely CONTAINS a ">" character, e.g.
+# awk's "$1>5" or a git --format string with a literal ">" in it.
 #
 # "cp"/"install"/"ln"/"truncate"/"sed -i"/"perl -i"'s target is taken as
 # the LAST word of the segment — correct for the common invocation shapes
@@ -459,6 +466,32 @@ scan_segment() {
     if [ -n "$op" ]; then
       if [ -n "$rest" ]; then target="$rest"; else target="${words_ss[i+1]:-}"; fi
       if journal_target "$target"; then WG_HIT="$target (via $op)"; return 0; fi
+    fi
+    # v3.9 fix: the SAME operator glued onto the TAIL of the PRECEDING text
+    # instead of the front of the target — "echo 'x'>>FILE" tokenizes
+    # (whitespace-only splitting, no real shell parsing) into one word
+    # "x'>>FILE" that starts with neither a quote nor the operator, so the
+    # prefix-only case above never looks at it at all. Only tried when the
+    # prefix case just above found nothing in this word (never re-checks a
+    # word already handled), and only the LAST operator occurrence in the
+    # word is used, same precedence order (longest/most specific first) —
+    # whatever follows it is the target, falling back to the next word when
+    # nothing follows, exactly like the prefix case.
+    if [ -z "$op" ]; then
+      case "$w" in
+        *'1>>'*) op='1>>'; rest="${w##*1>>}" ;;
+        *'2>>'*) op='2>>'; rest="${w##*2>>}" ;;
+        *'>>'*)  op='>>';  rest="${w##*>>}" ;;
+        *'>|'*)  op='>|';  rest="${w##*>|}" ;;
+        *'&>'*)  op='&>';  rest="${w##*&>}" ;;
+        *'1>'*)  op='1>';  rest="${w##*1>}" ;;
+        *'2>'*)  op='2>';  rest="${w##*2>}" ;;
+        *'>'*)   op='>';   rest="${w##*>}" ;;
+      esac
+      if [ -n "$op" ]; then
+        if [ -n "$rest" ]; then target="$rest"; else target="${words_ss[i+1]:-}"; fi
+        if journal_target "$target"; then WG_HIT="$target (via $op, glued to preceding text)"; return 0; fi
+      fi
     fi
     if [ "$w" = "tee" ]; then
       local nxt="${words_ss[i+1]:-}" tgt
@@ -545,20 +578,35 @@ bash_write_target_hit() {
 # anywhere in the text — unlike the precise per-target scan above, this
 # does not try to associate the write call with a specific argument (that
 # would mean parsing Python/JS, out of scope for a shell heuristic).
-# Deliberately two separate checks ANDed together (a date-shaped .md
-# filename anywhere, one of ROOT_PREFIXES anywhere) rather than one
-# combined regex with $ROOT spliced in — $ROOT comes from bro-config.json
-# and splicing it unescaped into an ERE would misparse on a path
-# containing a regex metacharacter; grep -F (fixed-string) sidesteps that
-# entirely, same reason the Write/Edit branch above never regex-matches
-# $ROOT either.
+# Two separate checks ANDed together (a date-shaped .md filename anywhere,
+# one of ROOT_PREFIXES anywhere) rather than one combined regex with $ROOT
+# spliced in — $ROOT comes from bro-config.json and splicing it unescaped
+# into an ERE would misparse on a path containing a regex metacharacter;
+# grep -F (fixed-string) sidesteps that entirely, same reason the
+# Write/Edit branch above never regex-matches $ROOT either.
+#
+# v3.9 fix: the ROOT_PREFIXES scan above only sees a path that spells the
+# store root out — open('2026-09-22.md','a'), a BARE relative filename
+# with the working directory already inside the workspace (cwd=~/bro/
+# proj1, say), never mentions $ROOT/~/bro/$HOME anywhere in the text, so
+# it was invisible. A python/node one-liner has no cwd of its own — it
+# inherits the SAME working directory this hook already tracks as WG_CWD
+# (advanced past any `cd`/`pushd` earlier in this same command by
+# bash_write_target_hit, which always runs before this function) — so this
+# reuses journal_target()'s own relative-path resolution against WG_CWD,
+# exactly like a bare relative shell redirect already gets. The quoted
+# argument carrying the date pattern is extracted whole and handed to
+# journal_target() as-is; it strips the quotes itself, same as every other
+# caller.
 pynode_hit() {
-  local text="$1" pfx
+  local text="$1" pfx fname
   printf '%s' "$text" | grep -qE "open\([^)]*['\"](w|a)['\"]|writeFile|appendFile" || return 1
   printf '%s' "$text" | grep -qE '[0-9]{4}-[0-9]{2}-[0-9]{2}\.md' || return 1
   for pfx in "${ROOT_PREFIXES[@]}"; do
     printf '%s' "$text" | grep -qF "$pfx" && return 0
   done
+  fname=$(printf '%s' "$text" | grep -oE "['\"][^'\"]*[0-9]{4}-[0-9]{2}-[0-9]{2}\.md['\"]" | head -1)
+  [ -n "$fname" ] && journal_target "$fname" && return 0
   return 1
 }
 
@@ -627,7 +675,7 @@ if [ "$TOOL" = "Bash" ]; then
     fi
   fi
   if pynode_hit "$STRIPPED"; then
-    deny "bro v3.8: this Bash command looks like a python/node one-liner writing directly into a shared daily journal (a journal path under $ROOT together with an open(...,'w'|'a')/writeFile/appendFile call). $(APPEND_HELP "")"
+    deny "bro v3.8: this Bash command looks like a python/node one-liner writing directly into a shared daily journal (a journal path under $ROOT, or a bare relative journal-shaped filename while the working directory is already inside it, together with an open(...,'w'|'a')/writeFile/appendFile call). $(APPEND_HELP "")"
   fi
 
   exit 0

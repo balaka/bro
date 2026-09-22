@@ -128,19 +128,20 @@ BADLN=$(grep -nE "$MRE_NOCOLON" "$BODY_RAW" 2>/dev/null | head -1)
 if [ -n "$BADLN" ]; then
   err "body line ${BADLN%%:*} looks like a marker missing its ':' — harvest would silently skip it. Write 'KEYWORD: text' or reword: ${BADLN#*:}"
 fi
-# (c) v3.8 (§7): a TAIL/ХВОСТ/Хвост line is ONE open item, not a notebook
-# entry for several ("- one record carries 4-6 items through '; ', the
-# same list re-recorded four times with drifting wording — this is
-# open.md's main weight" per the plan). Reject before a byte is written if
-# the line has 2+ TOP-LEVEL "; " separators, 2+ real numbered-list items
+# (c) v3.8 (§7), renamed v3.9 (§1): an OPEN-type line is ONE open item, not
+# a notebook entry for several ("- one record carries 4-6 items through
+# '; ', the same list re-recorded four times with drifting wording — this
+# is open.md's main weight" per the plan). Reject before a byte is written
+# if the line has 2+ TOP-LEVEL "; " separators, 2+ real numbered-list items
 # ("(1)"+"(2)" or "1)"+"2)"), or is over length. Uses marker_type()
 # (bro-lib.sh) to find the CANONICAL type, not a re-spelled keyword list —
 # same discipline as checks (a)/(b) above and harvest.sh's own dispatch:
-# any of the three accepted spellings (TAIL, ХВОСТ, Хвост) is caught
-# identically, and every OTHER marker type is untouched by this rule
-# (plan: "Остальные метки не проверяются этим правилом").
+# any of the five accepted spellings (canonical OPEN, RU canonical ДЕЛО,
+# and the old TAIL, ХВОСТ, Хвост) is caught identically, and every OTHER
+# marker type is untouched by this rule — the plan checks only the
+# open-item marker, nothing else.
 #
-# v3.8 review fixes (проверяющий №2, run against all 613 real ХВОСТ lines
+# v3.8 review fixes (reviewer #2, run against all 613 real ХВОСТ lines
 # in the chronicles) — the first cut of all three checks below was too
 # loose or too strict:
 #  - "; " used to count EVERY occurrence anywhere on the line, so a single
@@ -179,7 +180,7 @@ while IFS= read -r TL_RAWLN || [ -n "$TL_RAWLN" ]; do
   TL_KW="${TL_HEAD%% *}"
   TL_KW="${TL_KW%%-*}"; TL_KW="${TL_KW%%–*}"; TL_KW="${TL_KW%%—*}"
   TL_KC=$(marker_type "$TL_KW") || continue
-  [ "$TL_KC" = "TAIL" ] || continue
+  [ "$TL_KC" = "OPEN" ] || continue
 
   # top-level only: blank out (...) / «...» / "..." spans before counting,
   # so an aside's own internal "; " never counts as a second/third item
@@ -187,7 +188,7 @@ while IFS= read -r TL_RAWLN || [ -n "$TL_RAWLN" ]; do
   TL_SEMIN=$(printf '%s' "$TL_TOPLEVEL" | grep -o '; ' | wc -l | tr -d ' ')
   [ -n "$TL_SEMIN" ] || TL_SEMIN=0
   if [ "$TL_SEMIN" -ge 2 ]; then
-    err "line $TL_LNNO: a TAIL/ХВОСТ/Хвост line carries $TL_SEMIN top-level '; '-separated items — one open item per TAIL: line, split the rest into their own TAIL: lines: $(printf '%s' "$TL_BODY" | cut -c1-80)"
+    err "line $TL_LNNO: an OPEN-type line ($TL_KW:) carries $TL_SEMIN top-level '; '-separated items — one open item per line, split the rest into their own $TL_KW: lines: $(printf '%s' "$TL_BODY" | cut -c1-80)"
   fi
 
   # real numbered list only: both "(1)" and "(2)", or both "1)" and "2)" —
@@ -197,7 +198,7 @@ while IFS= read -r TL_RAWLN || [ -n "$TL_RAWLN" ]; do
   TL_HASB1=0; printf '%s' "$TL_BODY" | grep -qE '(^|[[:space:]])1\)' && TL_HASB1=1
   TL_HASB2=0; printf '%s' "$TL_BODY" | grep -qE '(^|[[:space:]])2\)' && TL_HASB2=1
   if { [ "$TL_HASP1" = 1 ] && [ "$TL_HASP2" = 1 ]; } || { [ "$TL_HASB1" = 1 ] && [ "$TL_HASB2" = 1 ]; }; then
-    err "line $TL_LNNO: a TAIL/ХВОСТ/Хвост line looks like a numbered list (both item 1 and item 2 present) — one open item per TAIL: line, split the rest into their own TAIL: lines: $(printf '%s' "$TL_BODY" | cut -c1-80)"
+    err "line $TL_LNNO: an OPEN-type line ($TL_KW:) looks like a numbered list (both item 1 and item 2 present) — one open item per line, split the rest into their own $TL_KW: lines: $(printf '%s' "$TL_BODY" | cut -c1-80)"
   fi
 
   # length: characters, not bytes -- probed once, lazily, against an
@@ -220,7 +221,7 @@ while IFS= read -r TL_RAWLN || [ -n "$TL_RAWLN" ]; do
     TL_LEN=$(printf '%s' "$TL_BODY" | wc -c | tr -d ' '); TL_LIMIT=750; TL_UNIT="bytes"
   fi
   if [ "$TL_LEN" -gt "$TL_LIMIT" ]; then
-    err "line $TL_LNNO: a TAIL/ХВОСТ/Хвост line is $TL_LEN $TL_UNIT (over the $TL_LIMIT-$TL_UNIT limit) — one open item per TAIL: line; trim it or split the rest into their own TAIL: lines"
+    err "line $TL_LNNO: an OPEN-type line ($TL_KW:) is $TL_LEN $TL_UNIT (over the $TL_LIMIT-$TL_UNIT limit) — one open item per line; trim it or split the rest into their own $TL_KW: lines"
   fi
 done < "$BODY_RAW"
 

@@ -396,7 +396,7 @@ cd "$REPO_DIR"
 "$BIN/bro-harvest.sh" --root "$ROOT" --workspace wsclosed >/dev/null
 FLIPPED=$(grep -F "$TID" "$OPEN" | head -1)
 assert_contains "CLOSED: checkbox flips to [x]" "$FLIPPED" "- [x] $TID"
-assert_contains "CLOSED: closed-reason text appended" "$FLIPPED" "закрыт"
+assert_contains "CLOSED: closed-reason text appended" "$FLIPPED" "— closed "
 assert_contains "CLOSED: closed-reason carries the operator's own text" "$FLIPPED" "fixed it during review"
 DIFFCNT=$(diff "$SB/open-before-close.md" "$OPEN" | grep -c '^[<>]')
 assert_eq "CLOSED: exactly one line changed in open.md, nothing else touched" "$DIFFCNT" "2"
@@ -930,10 +930,10 @@ NSIDES=$(grep -c '^- ' "$SMD" 2>/dev/null || echo 0)
 assert_eq "STATE: three СОСТОЯНИЕ: lines in one record become exactly 3 sides" "$NSIDES" "3"
 assert_contains "STATE: side 1 text present" "$(cat "$SMD")" "подустал, третий час подряд"
 assert_contains "STATE: side 3 text present" "$(cat "$SMD")" "без иронии сегодня"
-assert_contains "STATE: header is the exact required title" "$(head -1 "$SMD")" "# Состояние оператора"
+assert_contains "STATE: header is the exact required title" "$(head -1 "$SMD")" "# Operator state"
 assert_contains "STATE: ts comment present" "$(cat "$SMD")" "<!-- ts: "
 assert_contains "STATE: do-not-edit-by-hand comment present" "$(cat "$SMD")" "written by bro-harvest; do not edit by hand"
-assert_contains "STATE: записано line names the project" "$(cat "$SMD")" "проект ws12a"
+assert_contains "STATE: recorded line names the project" "$(cat "$SMD")" "project ws12a"
 assert_not_contains "STATE: 'State: pending' (EN Title-case) contributes no side" "$(cat "$SMD")" "pending"
 
 # coordinator follow-up: 'Состояние:' (Capitalized) is deliberately NOT
@@ -1036,7 +1036,7 @@ EOF
 INS13="$ROOT/ws13/insights.md"
 assert_file_exists "INSIGHT: insights.md created" "$INS13"
 assert_contains "INSIGHT: 'ИНСАЙТ:' (ALL CAPS) harvested with an i-xxxxxx id" "$(cat "$INS13")" "маркетплейс модулей"
-assert_contains "INSIGHT: line shape matches vocab.md's own pattern (id · body — родился: date)" "$(grep 'маркетплейс' "$INS13")" "— родился: $DATE"
+assert_contains "INSIGHT: line shape matches vocab.md's own pattern (id · body — from: date)" "$(grep 'маркетплейс' "$INS13")" "— from: $DATE"
 assert_contains "INSIGHT: register header matches the ensure_register shape" "$(sed -n '1p' "$INS13")" "# ws13 — insights"
 IDCNT13=$(grep -c '^- \*\*i-' "$INS13")
 assert_eq "INSIGHT: exactly one entry — only the ALL-CAPS line counts" "$IDCNT13" "1"
@@ -1196,7 +1196,7 @@ cat > "$F15A" <<EOF
 # bro — $DATE / ws15old
 
 ## Evening S
-DECIDED d-dup001: chose Postgres over Mongo because it handles JSON natively and the team already knows it well
+РЕШЕНИЕ d-dup001: chose Postgres over Mongo because it handles JSON natively and the team already knows it well
 EOF
 CNT15A_BEFORE=$(grep -c '^### ' "$DEC15")
 "$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws15old --full > "$SB/ws15old-out.log" 2>&1
@@ -1221,8 +1221,8 @@ cat > "$F15B" <<EOF
 # bro — $DATE / ws15both
 
 ## 09:00 · t — both real
-DECIDED d-samenum: chose the blue color scheme for the landing page header
-DECIDED d-samenum: switched the database backend from MySQL to Postgres entirely
+РЕШЕНИЕ d-samenum: chose the blue color scheme for the landing page header
+РЕШЕНИЕ d-samenum: switched the database backend from MySQL to Postgres entirely
 EOF
 "$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws15both --full > "$SB/ws15both-out.log" 2>&1
 DEC15B="$ROOT/ws15both/decisions.md"
@@ -1236,6 +1236,475 @@ assert_not_contains "(b) two real collisions: neither is mistaken for 'already p
 "$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws15both --full >/dev/null 2>&1
 CNT15B_TWICE=$(grep -c '^### ' "$DEC15B")
 assert_eq "(c) two real collisions: a second --full in a row still leaves exactly 2 records" "$CNT15B_TWICE" "2"
+
+# ===========================================================================
+# 16. English rename (v3.9 §1-§3): OPEN/ДЕЛО marker, English storage
+#     strings, bilingual reads
+# ===========================================================================
+echo "-- 16. English rename: OPEN/ДЕЛО marker, English writes, bilingual reads --"
+
+# marker_type() unit-level: all five open-item spellings fold to the one
+# canonical OPEN token (was TAIL pre-3.9); an unrecognized word returns 1
+new_sandbox
+install_repo >/dev/null
+. "$SCRIPTS_DIR/bro-lib.sh"
+for kw in OPEN ДЕЛО TAIL ХВОСТ Хвост; do
+  GOT=$(marker_type "$kw")
+  assert_eq "marker_type: '$kw' folds to the canonical OPEN token" "$GOT" "OPEN"
+done
+marker_type NOTAMARKER >/dev/null 2>&1
+assert_eq "marker_type: an unrecognized word returns exit 1" "$?" "1"
+
+# end-to-end: OPEN: (new canonical EN spelling) is harvested into open.md,
+# still with a t- id (the id prefix is unchanged by the rename)
+new_sandbox
+install_repo >/dev/null
+mkws ws16open
+PROJ16=$(proj_dir ws16open)
+cd "$PROJ16"
+printf 'OPEN: something new to follow up on\n' | "$BIN/bro-append.sh" --workspace ws16open --thread t --topic seed >/dev/null
+cd "$REPO_DIR"
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws16open >/dev/null
+OPEN16="$ROOT/ws16open/open.md"
+assert_contains "OPEN: harvested into open.md" "$(cat "$OPEN16" 2>/dev/null)" "something new to follow up on"
+TID16=$(grep -oE '^- \[ \] t-[a-f0-9]+' "$OPEN16" | head -1 | awk '{print $3}')
+if [ -n "$TID16" ]; then pass "OPEN: id still uses the t- prefix"; else fail "OPEN: id still uses the t- prefix" "no t-* id found in $OPEN16"; fi
+IDX16A=$(cat "$ROOT/INDEX.md" 2>/dev/null)
+assert_contains "INDEX.md: column header says 'open items', not 'open tails'" "$IDX16A" "open items"
+assert_not_contains "INDEX.md: no more 'open tails' column header" "$IDX16A" "open tails"
+assert_contains "INDEX.md: empty Reviews-due case uses the new English text" "$IDX16A" "_(none — the next review dates are inside _principles.md)_"
+
+# end-to-end: ДЕЛО: (new RU spelling, ALL CAPS only) is harvested the same way
+new_sandbox
+install_repo >/dev/null
+mkws ws16delo
+DATE=$(date +%F)
+F16D="$ROOT/ws16delo/$DATE.md"
+cat > "$F16D" <<EOF
+# bro — $DATE / ws16delo
+
+## 09:00 · t — ДЕЛО marker
+ДЕЛО: новое незакрытое дело оператора
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws16delo --full > "$SB/ws16delo-out.log" 2>&1
+OPEN16D="$ROOT/ws16delo/open.md"
+assert_contains "ДЕЛО: (ALL CAPS RU) harvested into open.md" "$(cat "$OPEN16D" 2>/dev/null)" "новое незакрытое дело оператора"
+
+# "Дело:" (Capitalized RU) is NOT a marker — same treatment as "Состояние:"/
+# "Инсайт:" — and, by the same design choice, not even a near-miss either
+new_sandbox
+install_repo >/dev/null
+mkws ws16delocap
+F16DC="$ROOT/ws16delocap/$DATE.md"
+cat > "$F16DC" <<EOF
+# bro — $DATE / ws16delocap
+
+## 09:00 · t — capitalized Дело must be ignored
+Дело: обычная фраза оператора, не метка
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws16delocap --full > "$SB/ws16delocap-out.log" 2>&1
+assert_file_absent "'Дело:' (Capitalized) creates no open.md at all" "$ROOT/ws16delocap/open.md"
+assert_not_contains "'Дело:' is not counted as a near-miss either (same design as Состояние:/Инсайт:)" "$(cat "$SB/ws16delocap-out.log")" "near-marker line(s)"
+
+# old spellings TAIL / ХВОСТ / Хвост still land in open.md exactly like OPEN
+new_sandbox
+install_repo >/dev/null
+mkws ws16old
+DATE=$(date +%F)
+F16O="$ROOT/ws16old/$DATE.md"
+cat > "$F16O" <<EOF
+# bro — $DATE / ws16old
+
+## 09:00 · t — old EN spelling
+TAIL: still read the old EN way
+
+## 09:05 · t — old RU ALL CAPS
+ХВОСТ: всё ещё читается заглавными
+
+## 09:10 · t — old RU Capitalized
+Хвост: всё ещё читается с большой буквы
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws16old --full > "$SB/ws16old-out.log" 2>&1
+OPEN16O="$ROOT/ws16old/open.md"
+assert_contains "old TAIL: still harvested" "$(cat "$OPEN16O" 2>/dev/null)" "still read the old EN way"
+assert_contains "old ХВОСТ: (ALL CAPS) still harvested" "$(cat "$OPEN16O" 2>/dev/null)" "всё ещё читается заглавными"
+assert_contains "old Хвост: (Capitalized) still harvested" "$(cat "$OPEN16O" 2>/dev/null)" "всё ещё читается с большой буквы"
+OCNT16=$(grep -c '^- \[ \] t-' "$OPEN16O")
+assert_eq "old TAIL/ХВОСТ/Хвост: three lines -> three distinct open items" "$OCNT16" "3"
+assert_contains "new open item uses the English '— from: ' signature" "$(grep 'still read the old EN way' "$OPEN16O")" "— from: "
+assert_not_contains "new open item does NOT use the old RU '— родился: ' signature" "$(grep 'still read the old EN way' "$OPEN16O")" "родился"
+
+# new records in every register use "— from: ", never the old RU signatures
+new_sandbox
+install_repo >/dev/null
+mkws ws16from
+DATE=$(date +%F)
+F16F="$ROOT/ws16from/$DATE.md"
+cat > "$F16F" <<EOF
+# bro — $DATE / ws16from
+
+## 09:00 · t — from signature
+DECIDED: chose the English "from" signature everywhere
+TERM: fromterm - a term to check the signature on
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws16from --full >/dev/null 2>&1
+assert_contains "decisions.md: new record uses '— from: '" "$(cat "$ROOT/ws16from/decisions.md")" "— from: $DATE"
+assert_not_contains "decisions.md: no old '— родилось: ' signature written" "$(cat "$ROOT/ws16from/decisions.md")" "родилось"
+assert_contains "vocab.md: new record uses '— from: '" "$(cat "$ROOT/ws16from/vocab.md")" "— from: $DATE"
+assert_contains "decisions.md: header/description are the new English text" "$(sed -n '1,4p' "$ROOT/ws16from/decisions.md")" "Filled automatically from the daily journals"
+
+# CLOSED now appends the English "closed" text, not the old RU "закрыт"
+new_sandbox
+install_repo >/dev/null
+mkws ws16closed
+PROJ16c=$(proj_dir ws16closed)
+cd "$PROJ16c"
+printf 'OPEN: to be closed in English\n' | "$BIN/bro-append.sh" --workspace ws16closed --thread t --topic seed >/dev/null
+cd "$REPO_DIR"
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws16closed >/dev/null
+OPEN16C="$ROOT/ws16closed/open.md"
+TID16C=$(grep -oE '^- \[ \] [a-z0-9-]+' "$OPEN16C" | head -1 | awk '{print $4}')
+cd "$PROJ16c"
+printf 'CLOSED %s: closed it, English text now\n' "$TID16C" | "$BIN/bro-append.sh" --workspace ws16closed --thread t --topic close >/dev/null
+cd "$REPO_DIR"
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws16closed >/dev/null
+CLOSEDLINE16=$(grep -F "$TID16C" "$OPEN16C")
+assert_contains "CLOSED write uses the English '— closed ' text" "$CLOSEDLINE16" "— closed "
+assert_not_contains "CLOSED write no longer uses the old RU '— закрыт ' text" "$CLOSEDLINE16" "закрыт"
+
+# dash-instead-of-colon near-misses now also cover OPEN/ДЕЛО
+new_sandbox
+install_repo >/dev/null
+mkws ws16dash
+DATE=$(date +%F)
+F16DASH="$ROOT/ws16dash/$DATE.md"
+cat > "$F16DASH" <<EOF
+# bro — $DATE / ws16dash
+
+## 09:00 · t — dash instead of colon
+OPEN — dash instead of colon, EN
+ДЕЛО — тире вместо двоеточия, RU
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws16dash --full > "$SB/ws16dash-out.log" 2>&1
+assert_contains "near-marker: 'OPEN —'/'ДЕЛО —' (dash instead of colon) both counted (2)" "$(cat "$SB/ws16dash-out.log")" "2 near-marker line(s) not harvested"
+assert_file_absent "near-marker: dash lines create no open.md record" "$ROOT/ws16dash/open.md"
+
+# --- a registry with the OLD Russian signatures still parses: 3.8.1 glued-
+# dedup, CLOSED, and a repeated --full all keep working on a register that
+# was never translated (scripts/bro-translate-registers.sh not run) ---
+new_sandbox
+install_repo >/dev/null
+mkws ws16legacy
+DATE=$(date +%F)
+
+# (a) open.md: a glued pre-3.7-style record under a suffixed id, plus an
+# unrelated bare-id record, both with the old "— родился: " signature —
+# same shape as section 15(a) above, but for the oneline (open.md) form,
+# which section 15 does not cover.
+OPEN16L="$ROOT/ws16legacy/open.md"
+cat > "$OPEN16L" <<EOF
+# ws16legacy — open items
+
+> Хвосты и открытые вопросы. Закрытие — маркером CLOSED:/ЗАКРЫТ: в дневнике (жатва проставляет [x]), не руками. Жатва закрытые не переоткрывает.
+
+- [ ] t-legacy1 · an unrelated older open item under the bare base id — родился: 2026-01-01
+
+- [ ] t-legacy1x9999 · an old open item, body continues glued on from a pre-3.7 harvest pass here — родился: $DATE · «Evening L»
+
+- [ ] t-legacy3 · a plain old open item waiting to be closed — родился: 2026-01-02
+
+EOF
+F16L="$ROOT/ws16legacy/$DATE.md"
+cat > "$F16L" <<EOF
+# bro — $DATE / ws16legacy
+
+## Evening L
+ХВОСТ t-legacy1: an old open item, body continues glued on from a pre-3.7 harvest pass
+CLOSED t-legacy3: closing a plain legacy item, the new text should be English
+EOF
+OPENCNT16L_BEFORE=$(grep -c '^- \[' "$OPEN16L")
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws16legacy --full > "$SB/ws16legacy-out.log" 2>&1
+OPENCNT16L_AFTER=$(grep -c '^- \[' "$OPEN16L")
+assert_eq "legacy RU signature: 3.8.1 glued-dedup over an old '— родился: ' record adds no new open item" "$OPENCNT16L_AFTER" "$OPENCNT16L_BEFORE"
+assert_contains "legacy RU signature: dedup reports the old record as already present" "$(cat "$SB/ws16legacy-out.log")" "already present as t-legacy1x9999"
+
+CLOSEDLINE16L=$(grep -F "t-legacy3" "$OPEN16L")
+assert_contains "legacy RU signature: CLOSED still finds a bare old-signature item and flips its checkbox" "$CLOSEDLINE16L" "- [x] t-legacy3"
+assert_contains "legacy RU signature: the appended closing text is the new English 'closed'" "$CLOSEDLINE16L" "— closed $DATE:"
+assert_contains "legacy RU signature: the item's original '— родился: ' text is preserved, not rewritten" "$CLOSEDLINE16L" "— родился: 2026-01-02"
+assert_file_absent "legacy RU signature: closing a real id produces no CLOSE-MISS" "$ROOT/ws16legacy/.close-misses.log"
+
+# repeated --full: still no duplicates anywhere
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws16legacy --full >/dev/null 2>&1
+OPENCNT16L_TWICE=$(grep -c '^- \[' "$OPEN16L")
+assert_eq "legacy RU signature: a second --full in a row still adds nothing to open.md" "$OPENCNT16L_TWICE" "$OPENCNT16L_BEFORE"
+
+# --- principles: review-date parsing understands both the RU field names
+# and the EN ones (§3); a repository INDEX.md never carries Cyrillic
+# service text regardless of which language _principles.md is written in ---
+new_sandbox
+install_repo >/dev/null
+mkws ws16princ
+PASTDATE="2020-01-01"
+cat > "$ROOT/_principles.md" <<EOF
+# principles
+
+### 1. english-fielded principle
+**Category:** speech
+**Rule:** say it plainly
+**Origin:** 2026-01-01
+**Enforcement:** none yet
+**Bounds:** —
+**Review:** $PASTDATE
+
+### 2. russian-fielded principle
+**Категория:** речь
+**Правило:** говори по делу
+**Родилось:** 2026-01-01
+**Исполнение:** пока нет
+**Границы:** —
+**Пересмотр:** $PASTDATE
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --all --full >/dev/null 2>&1
+IDX16P="$ROOT/INDEX.md"
+assert_contains "INDEX.md: an English-fielded principle ('**Review:**') is listed as due" "$(cat "$IDX16P")" "english-fielded principle"
+assert_contains "INDEX.md: a Russian-fielded principle ('**Пересмотр:**') is still listed as due too" "$(cat "$IDX16P")" "russian-fielded principle"
+# NB: NOT a plain `grep -c '[А-Яа-яЁё]'` -- under the unset/"C" locale this
+# suite runs under, this system's BSD grep (2.6.0-FreeBSD) mis-widens that
+# multi-byte bracket range and also matches the em-dash/arrow bytes (UTF-8
+# 0xE2 0x80/0x86 ...) this very file's own English text legitimately uses
+# ("— was due", "→ push"), turning a locale artifact into a false failure
+# (confirmed live: 0 real Cyrillic bytes, 4 lines reported under plain
+# LC_ALL=C; forcing LC_ALL=en_US.UTF-8 also fixes it, but that assumes the
+# locale is installed). Matching the raw UTF-8 lead byte of the Cyrillic
+# block (0xD0/0xD1) under an explicit C locale sidesteps the bracket-range
+# bug entirely and needs no UTF-8 locale installed -- same byte-precise
+# discipline bro-lib.sh's own utf8_trunc() already uses for the identical
+# BSD-userland reason.
+CYR_IN_INDEX=$(LC_ALL=C grep -c $'[\xd0\xd1]' "$IDX16P" 2>/dev/null)
+[ -n "$CYR_IN_INDEX" ] || CYR_IN_INDEX=0
+assert_eq "INDEX.md: no Cyrillic characters anywhere in the generated file" "$CYR_IN_INDEX" "0"
+
+# ===========================================================================
+# 17. coordinator fixes after the 3.9 review (two rounds): EN keywords
+#     (CLOSED included) accept exactly ONE optional token, but only an id
+#     (with a digit, or bro's own 6-hex-char auto id) or a parenthetical
+#     note — never an ordinary word; find_glued_dup_oneline() cuts
+#     body/source at the SAME point
+# ===========================================================================
+echo "-- 17. coordinator fixes: EN restricted token, dedup same-cut-point --"
+
+# marker recognition, round 2: real audit numbers -- 117x "DECIDED d-xxx:",
+# 52x "TAIL t-xxx:", 9x a parenthetical note -- all real; "follow-ups",
+# "to-do", "QUESTIONS", "ISSUES", "FACTOR" -- never real. RU keywords are
+# unaffected: any single word, as always.
+new_sandbox
+install_repo >/dev/null
+mkws ws17mre
+DATE=$(date +%F)
+F17MRE="$ROOT/ws17mre/$DATE.md"
+cat > "$F17MRE" <<EOF
+# bro — $DATE / ws17mre
+
+## 09:00 · t — ordinary EN prose must still be rejected
+OPEN QUESTIONS: unresolved topics for the retro
+OPEN ISSUES: a list, not a single open item
+OPEN follow-ups: two hyphenated words, not an id
+OPEN to-do: hyphenated word with no digit in it
+DECIDED FACTOR: not a real decision, just a heading
+
+## 09:05 · t — real EN markers, no token at all
+OPEN: a real open item, no word before the colon
+DECIDED: a real decision, no word before the colon
+
+## 09:10 · t — real EN markers, an operator-typed id (contains a digit)
+DECIDED d-0908-26: the record's own number, typed by the chat
+TAIL t-0909-2: the record's own number, typed by the chat
+
+## 09:15 · t — real EN markers, bro's own 6-hex-char auto id (may have no digit)
+OPEN t-abc123: auto id with a digit in it
+OPEN t-abcdef: auto id, pure hex letters, no digit at all
+
+## 09:20 · t — real EN markers, a parenthetical note (colon allowed inside)
+DECIDED (operator): who decided, not what
+RULE (его): whose rule, not what
+REJECTED (02:26): a timestamp reference, not what
+
+## 09:25 · t — seed for the CLOSED-by-id checks below
+TAIL: closing target for the CLOSED/ЗАКРЫТ cases below
+
+## 09:30 · t — RU markers with a word before the colon, unaffected
+Решение владельца: настоящая метка, слово перед двоеточием — не мешает
+Правило подтверждено: тоже настоящая метка
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws17mre --full > "$SB/ws17mre-out.log" 2>&1
+DEC17="$ROOT/ws17mre/decisions.md"
+OPEN17="$ROOT/ws17mre/open.md"
+RCAND17="$ROOT/_rule-candidates.md"
+
+assert_not_contains "round 2: 'OPEN QUESTIONS:' is not harvested as an open item" "$(cat "$OPEN17" 2>/dev/null)" "unresolved topics for the retro"
+assert_not_contains "round 2: 'OPEN ISSUES:' is not harvested as an open item" "$(cat "$OPEN17" 2>/dev/null)" "a list, not a single open item"
+assert_not_contains "round 2: 'OPEN follow-ups:' is not harvested (two words, no digit)" "$(cat "$OPEN17" 2>/dev/null)" "two hyphenated words, not an id"
+assert_not_contains "round 2: 'OPEN to-do:' is not harvested (hyphenated word, no digit)" "$(cat "$OPEN17" 2>/dev/null)" "hyphenated word with no digit in it"
+assert_not_contains "round 2: 'DECIDED FACTOR:' is not harvested as a decision" "$(cat "$DEC17" 2>/dev/null)" "not a real decision, just a heading"
+
+assert_contains "round 2: plain 'OPEN:' (no token) still harvested" "$(cat "$OPEN17" 2>/dev/null)" "a real open item, no word before the colon"
+assert_contains "round 2: plain 'DECIDED:' (no token) still harvested" "$(cat "$DEC17" 2>/dev/null)" "a real decision, no word before the colon"
+
+assert_contains "round 2: 'DECIDED d-0908-26:' (operator-typed id, real example) is harvested" "$(cat "$DEC17" 2>/dev/null)" "the record's own number, typed by the chat"
+assert_eq "round 2: 'DECIDED d-0908-26:' keeps the explicit id, not a hash" "$(grep -c '^### d-0908-26 ' "$DEC17")" "1"
+assert_contains "round 2: 'TAIL t-0909-2:' (operator-typed id, real example) is harvested" "$(cat "$OPEN17" 2>/dev/null)" "the record's own number, typed by the chat"
+assert_eq "round 2: 'TAIL t-0909-2:' keeps the explicit id, not a hash" "$(grep -c '^- \[ \] t-0909-2 ' "$OPEN17")" "1"
+
+assert_contains "round 2: 'OPEN t-abc123:' (auto id, has a digit) keeps that exact id" "$(cat "$OPEN17" 2>/dev/null)" "t-abc123 · auto id with a digit in it"
+assert_contains "round 2: 'OPEN t-abcdef:' (auto id, pure hex letters, no digit) keeps that exact id" "$(cat "$OPEN17" 2>/dev/null)" "t-abcdef · auto id, pure hex letters, no digit at all"
+
+assert_contains "round 2: 'DECIDED (operator):' (parenthetical note) is harvested, body clean" "$(cat "$DEC17" 2>/dev/null)" "who decided, not what"
+assert_not_contains "round 2: 'DECIDED (operator):' note is not prepended to the body" "$(cat "$DEC17" 2>/dev/null)" "(operator): who decided"
+assert_contains "round 2: 'RULE (его):' (parenthetical note) is harvested, body clean" "$(cat "$RCAND17" 2>/dev/null)" "whose rule, not what"
+assert_not_contains "round 2: 'RULE (его):' note is not prepended to the body" "$(cat "$RCAND17" 2>/dev/null)" "(его): whose rule"
+assert_contains "round 2: 'REJECTED (02:26):' (note with its OWN internal colon) is harvested, body clean" "$(cat "$DEC17" 2>/dev/null)" "a timestamp reference, not what"
+assert_not_contains "round 2: the split is not fooled by the token's own colon -- body does not start with the tail of '(02:26)'" "$(cat "$DEC17" 2>/dev/null)" "26): a timestamp reference"
+assert_not_contains "round 2: '(02:26)' note is not prepended to the body either" "$(cat "$DEC17" 2>/dev/null)" "(02:26): a timestamp reference"
+
+assert_contains "round 2: RU 'Решение владельца:' (word before colon) still a marker" "$(cat "$DEC17" 2>/dev/null)" "настоящая метка, слово перед двоеточием"
+assert_contains "round 2: RU 'Правило подтверждено:' (word before colon) still a marker" "$(cat "$RCAND17" 2>/dev/null)" "тоже настоящая метка"
+
+# CLOSED <id>: (EN) still takes its id
+TID17=$(grep 'closing target for the CLOSED' "$OPEN17" | grep -oE 't-[a-f0-9]+' | head -1)
+cd "$(proj_dir ws17mre)"
+printf 'CLOSED %s: closing via EN, id still parses\n' "$TID17" | "$BIN/bro-append.sh" --workspace ws17mre --thread t --topic close17 >/dev/null
+cd "$REPO_DIR"
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws17mre >/dev/null
+assert_contains "coordinator fix: CLOSED <id>: (EN) still closes by id" "$(grep -F "$TID17" "$OPEN17")" "- [x] $TID17"
+
+# ЗАКРЫТ <id>: (RU) still takes its id, on its own fresh seed
+mkws ws17ru
+F17RU="$ROOT/ws17ru/$DATE.md"
+cat > "$F17RU" <<EOF
+# bro — $DATE / ws17ru
+
+## 09:00 · t — seed
+TAIL: closing target for ЗАКРЫТ
+EOF
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws17ru --full >/dev/null 2>&1
+OPEN17RU="$ROOT/ws17ru/open.md"
+TID17RU=$(grep 'closing target for ЗАКРЫТ' "$OPEN17RU" | grep -oE 't-[a-f0-9]+' | head -1)
+cd "$(proj_dir ws17ru)"
+printf 'ЗАКРЫТ %s: closing via RU, id still parses\n' "$TID17RU" | "$BIN/bro-append.sh" --workspace ws17ru --thread t --topic close17ru >/dev/null
+cd "$REPO_DIR"
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws17ru >/dev/null
+assert_contains "coordinator fix: ЗАКРЫТ <id>: (RU) still closes by id" "$(grep -F "$TID17RU" "$OPEN17RU")" "- [x] $TID17RU"
+
+# the same fix, mirrored in bro-stop-turnstile.sh's degraded fallback copy of
+# MRE_NOCOLON (bro-lib.sh hidden) -- must still catch a genuine colonless
+# marker
+mkws ws17deg
+FDEG="$ROOT/ws17deg/$(date +%F).md"
+printf '# bro — %s / ws17deg\n\n## 09:00 · t — topic\nOPEN missing its colon here\n' "$(date +%F)" > "$FDEG"
+mv "$BIN/bro-lib.sh" "$SB/bro-lib.sh.hidden"
+IN=$(hookjson "$(proj_dir ws17deg)" "$(next_sid)" p1 Stop)
+OUT=$(printf '%s' "$IN" | "$BIN/bro-stop-turnstile.sh" 2>&1)
+mv "$SB/bro-lib.sh.hidden" "$BIN/bro-lib.sh"
+assert_contains "coordinator fix: degraded fallback still catches a colonless OPEN" "$OUT" "marker-like line(s) without ':'"
+
+# --- find_glued_dup_oneline(): a body that itself legally contains
+# "— from: "/"— родился: " text must not shift where body and source get
+# cut -- coordinator's own repro ---
+new_sandbox
+install_repo >/dev/null
+mkws ws17dedup
+DATE=$(date +%F)
+OPEN17D="$ROOT/ws17dedup/open.md"
+cat > "$OPEN17D" <<EOF
+# ws17dedup — open items
+
+> Open items: promised and not yet done.
+
+- [ ] t-abc123 · renamed — from: dash — from: $DATE · «00:00 · seed»
+
+EOF
+F17D="$ROOT/ws17dedup/$DATE.md"
+cat > "$F17D" <<EOF
+# bro — $DATE / ws17dedup
+
+## 00:00 · seed
+ДЕЛО t-abc123: renamed — from: dash and now continues with more detail
+EOF
+CNT17D_BEFORE=$(grep -c '^- \[' "$OPEN17D")
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws17dedup --full > "$SB/ws17dedup-out.log" 2>&1
+CNT17D_AFTER=$(grep -c '^- \[' "$OPEN17D")
+assert_eq "dedup fix: a body containing its own '— from: ' text adds no duplicate open item" "$CNT17D_AFTER" "$CNT17D_BEFORE"
+assert_contains "dedup fix: recognized as already present (not a COLLISION)" "$(cat "$SB/ws17dedup-out.log")" "already present as t-abc123"
+assert_not_contains "dedup fix: no COLLISION / suffixed id was minted" "$(cat "$SB/ws17dedup-out.log")" "COLLISION"
+assert_not_contains "dedup fix: open.md carries no x-suffixed duplicate of t-abc123" "$(cat "$OPEN17D")" "t-abc123x"
+
+# repeated --full: still no duplicate
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws17dedup --full >/dev/null 2>&1
+CNT17D_TWICE=$(grep -c '^- \[' "$OPEN17D")
+assert_eq "dedup fix: a second --full in a row still adds nothing" "$CNT17D_TWICE" "$CNT17D_BEFORE"
+
+# same scenario against the OLD RU '— родился: ' signature
+new_sandbox
+install_repo >/dev/null
+mkws ws17dedupru
+DATE=$(date +%F)
+OPEN17DR="$ROOT/ws17dedupru/open.md"
+cat > "$OPEN17DR" <<EOF
+# ws17dedupru — open items
+
+> Хвосты и открытые вопросы.
+
+- [ ] t-xyz789 · renamed — родился: dash — родился: $DATE · «00:00 · seed»
+
+EOF
+F17DR="$ROOT/ws17dedupru/$DATE.md"
+cat > "$F17DR" <<EOF
+# bro — $DATE / ws17dedupru
+
+## 00:00 · seed
+ХВОСТ t-xyz789: renamed — родился: dash and now continues with more detail
+EOF
+CNT17DR_BEFORE=$(grep -c '^- \[' "$OPEN17DR")
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws17dedupru --full > "$SB/ws17dedupru-out.log" 2>&1
+CNT17DR_AFTER=$(grep -c '^- \[' "$OPEN17DR")
+assert_eq "dedup fix (old RU signature): a self-referential body adds no duplicate" "$CNT17DR_AFTER" "$CNT17DR_BEFORE"
+assert_contains "dedup fix (old RU signature): recognized as already present" "$(cat "$SB/ws17dedupru-out.log")" "already present as t-xyz789"
+
+# --- find_glued_dup_multiline() (decisions.md): confirm it was never
+# vulnerable to the same bug -- body and signature are two separate
+# physical lines there, never split out of one combined string ---
+new_sandbox
+install_repo >/dev/null
+mkws ws17mline
+DATE=$(date +%F)
+DEC17M="$ROOT/ws17mline/decisions.md"
+cat > "$DEC17M" <<EOF
+# ws17mline — decisions
+
+> Decision register: what was chosen, instead of what, and why.
+
+### d-unrelated (2026-01-01) [active]
+an unrelated older decision under the bare base id
+— from: 2026-01-01 · «old unrelated»
+
+### d-unrelatedx9999 (2026-01-01) [active]
+chose Postgres — from: our old MySQL setup, this glued body continues into unrelated prose that a pre-3.7 harvest pass stitched on by accident
+— from: $DATE · «Evening M»
+
+EOF
+F17M="$ROOT/ws17mline/$DATE.md"
+cat > "$F17M" <<EOF
+# bro — $DATE / ws17mline
+
+## Evening M
+РЕШЕНИЕ d-unrelated: chose Postgres — from: our old MySQL setup
+EOF
+CNT17M_BEFORE=$(grep -c '^### ' "$DEC17M")
+"$BIN/bro-harvest.sh" --root "$ROOT" --workspace ws17mline --full > "$SB/ws17mline-out.log" 2>&1
+CNT17M_AFTER=$(grep -c '^### ' "$DEC17M")
+assert_eq "dedup multiline: a body containing its own '— from: ' text still adds no duplicate decision" "$CNT17M_AFTER" "$CNT17M_BEFORE"
+assert_contains "dedup multiline: recognized as already present as the glued suffixed id" "$(cat "$SB/ws17mline-out.log")" "already present as d-unrelatedx9999"
 
 # ===========================================================================
 # parts — additional per-builder test files land here (tests/parts/*.sh),

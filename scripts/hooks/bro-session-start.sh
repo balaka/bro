@@ -54,20 +54,27 @@ case "$SID" in *[!A-Za-z0-9_-]*) SID="" ;; esac   # it becomes a file name below
 # further down. A stale/missing/empty file or an unparseable ts must never
 # break this hook (3.6 already fixed one class of "chat opens with no
 # context at all" bug; this must not reopen it) — every step below
-# degrades instead of failing: no file or no "записано:" line found →
-# STATE_BLOCK stays empty and nothing is shown; ts present but not a bare
-# integer → age falls back to "age unknown" while the snapshot itself
-# still prints.
+# degrades instead of failing: no file or no "recorded:"/"записано:" line
+# found → STATE_BLOCK stays empty and nothing is shown; ts present but not
+# a bare integer → age falls back to "age unknown" while the snapshot
+# itself still prints.
+# v3.9 (§3 of the v3.9 plan) — bro-harvest.sh now writes "# Operator state"
+# and "recorded: " (was "# Состояние оператора" / "записано: "). Both the
+# header comment below and STATE_BODY's own awk match whichever form a
+# given store's _state.md actually has, so an operator who never runs
+# scripts/bro-translate-registers.sh keeps seeing their snapshot exactly
+# as before, byte for byte.
 STATE_FILE="$ROOT/_state.md"
 STATE_BLOCK=""
 if [ -f "$STATE_FILE" ]; then
   STATE_TS=$(sed -n 's/^<!-- ts: \([0-9][0-9]*\) .*-->$/\1/p' "$STATE_FILE" 2>/dev/null | head -1)
   case "$STATE_TS" in ''|*[!0-9]*) STATE_TS="" ;; esac
-  # from the "записано: …" line to EOF — everything the file shows below
-  # its own title + two "do not edit by hand" comments, matched by shape
-  # rather than a hardcoded line number so a harmless format tweak upstream
-  # (bro-harvest.sh) can't silently break this into showing nothing.
-  STATE_BODY=$(awk '/^записано: /{f=1} f' "$STATE_FILE" 2>/dev/null)
+  # from the "recorded: …" (new) or "записано: …" (old) line to EOF —
+  # everything the file shows below its own title + two "do not edit by
+  # hand" comments, matched by shape rather than a hardcoded line number so
+  # a harmless format tweak upstream (bro-harvest.sh) can't silently break
+  # this into showing nothing.
+  STATE_BODY=$(awk '/^(recorded|записано): /{f=1} f' "$STATE_FILE" 2>/dev/null)
   if [ -n "$STATE_BODY" ]; then
     AGE_TXT="age unknown"
     NOWSEC=$(date +%s 2>/dev/null)
@@ -343,8 +350,21 @@ if [ "$CONTEXT_ONLY" = 0 ] && [ -n "$SID" ]; then
   find "$MARK_DIR" -type f -mtime +180 -delete 2>/dev/null   # far beyond the life of any chat process
 fi
 
-# version: self-heal an organic (never-migrated) store, then compare
-SKILL_MAJOR=$(cut -d. -f1 "$HOME/.claude/bro/VERSION" 2>/dev/null || echo 3)
+# version: self-heal an organic (never-migrated) store, then compare.
+# v4.0 (operator's own decision, 22 Sep 2026): a store one major version
+# BEHIND the skill is not automatically "broken" the way a genuinely
+# incompatible one is — store v3 under skill v4 is read in FULL by every
+# script in this codebase (bro-lib.sh/bro-harvest.sh already read both its
+# Russian and English register service words, shipped in v3.9); the only
+# thing "outdated" about a v3 store is that its OWN registers still WRITE
+# those words in Russian. Blocking it outright — a chat opening with no
+# context at all — would be exactly the 3.6 bug this hook exists to
+# prevent, for a store that is not actually broken. So: only a genuinely
+# incompatible store (pre-3, a different on-disk architecture the rest of
+# this codebase cannot read at all) still blocks below; v3 gets the
+# ORDINARY full opening text plus one advisory line (V3_HINT, computed
+# right after the block check, prepended into CTX further down).
+SKILL_MAJOR=$(cut -d. -f1 "$HOME/.claude/bro/VERSION" 2>/dev/null || echo 4)
 if [ "$CONTEXT_ONLY" = 0 ]; then
   [ -f "$ROOT/.version" ] || echo "$SKILL_MAJOR" > "$ROOT/.version" 2>/dev/null
 fi
@@ -361,9 +381,23 @@ emit() { # $1 = context string
   return 0
 }
 
-if [ "$STORE_MAJOR" -lt "$SKILL_MAJOR" ] 2>/dev/null; then
+# hard-coded 3, not $SKILL_MAJOR: the threshold for "a different, unreadable
+# architecture" is fixed at the v3 rewrite itself, not "one behind whatever
+# the skill currently is" — see the comment above.
+if [ "$STORE_MAJOR" -lt 3 ] 2>/dev/null; then
   emit "bro: STORAGE FORMAT OUTDATED (store v$STORE_MAJOR, skill v$SKILL_MAJOR). Tell the user and run /bro migrate before writing any bro entries."
   exit 0
+fi
+
+# v3 under skill v4: fully functional, just not yet translated by
+# scripts/bro-translate-registers.sh (via /bro migrate) — one line, English
+# throughout (it names the fix without quoting any of the Russian words
+# it's advising about), prepended ahead of the ordinary CTX below the same
+# way STATE_BLOCK is (own separator added at the use site, not baked in —
+# see that block's own comment).
+V3_HINT=""
+if [ "$STORE_MAJOR" = 3 ] && [ "$SKILL_MAJOR" -ge 4 ] 2>/dev/null; then
+  V3_HINT="bro: this store is in v3 format — its registers still hold service words in Russian. Run /bro migrate once, with the store owner's consent, to translate them (a backup is made automatically); until then, everything works exactly as before."
 fi
 
 # (harvest is NOT run here any more — see bro-harvest-hook.sh, registered async)
@@ -371,7 +405,7 @@ fi
 TODAY=$(date +%F)
 NOW=$(date '+%H:%M')
 DOW=$(date '+%A')
-SKILL_FULL=$(cat "$HOME/.claude/bro/VERSION" 2>/dev/null || echo "3")
+SKILL_FULL=$(cat "$HOME/.claude/bro/VERSION" 2>/dev/null || echo "4")
 YESTERDAY=$(ls "$WS_DIR" 2>/dev/null | grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$' | sort | grep -v "^$TODAY\.md$" | tail -1)
 
 # read-order: only files that exist, registers included
@@ -392,8 +426,25 @@ N=$((N+1))
 # first, with its own separator added outside the $(...) that built it
 # ($(...) strips trailing newlines, so the blank-line separator has to be
 # added at each use site instead of baked into the captured value).
-CTX="$STATE_BLOCK${STATE_BLOCK:+$'\n\n'}bro v$SKILL_FULL active for workspace '$WS'. NOW: $TODAY $NOW ($DOW) — this is the time source; your inner sense of time is stale after any pause, so take timestamps and greetings from here or from date, never from feeling. Read now, in order:$RO."
-CTX="$CTX Journal format: a section is '## HH:MM · <work thread> — <topic with a distinguishing detail>' (HH:MM from date) followed by free text and typed markers on their own lines: DECIDED: / REJECTED: / RULE: / TAIL: / TERM: / STATE: / INSIGHT: (RU: РЕШЕНИЕ:/ОТКАЗ:/ПРАВИЛО:/ХВОСТ:/ТЕРМИН:/СОСТОЯНИЕ:/ИНСАЙТ:) — harvest moves them into the registers automatically. Write STATE: when the operator's mood, energy, or work mode changes — one side per line (several STATE: lines in the same section become several sides of one snapshot; RU/EN must be ALL CAPS, no 'Состояние:'/'State:' — those are read as ordinary prose, not a marker). Write INSIGHT: for a pattern, idea, or new approach worth not losing — bold the conclusion, 1–4 sentences, one line (also ALL CAPS only). Close a TAIL with CLOSED <its exact id from open.md>: <what closed it> (RU: ЗАКРЫТ <id>: ...) — no colon between the keyword and the id, harvest only reads the text before the FIRST colon as keyword+id; never hand-edit open.md; an id harvest can't find open is logged as a CLOSE-MISS, not silently lost. NEVER Write/Edit the journal file directly any more (the write guard denies it) — add a section with Bash: printf '%s\n' 'body text — one or more marker lines allowed' | ~/.claude/bro/bin/bro-append.sh --workspace $WS --thread '<work thread>' --topic '<topic>' — it stamps HH:MM from the real clock itself, validates the body before writing, and appends atomically under a lock. Keep the journal current — the stop hook enforces freshness."
+CTX="$STATE_BLOCK${STATE_BLOCK:+$'\n\n'}${V3_HINT}${V3_HINT:+$'\n\n'}bro v$SKILL_FULL active for workspace '$WS'. NOW: $TODAY $NOW ($DOW) — this is the time source; your inner sense of time is stale after any pause, so take timestamps and greetings from here or from date, never from feeling. Read now, in order:$RO."
+# v3.9 (§5 of the v3.9 plan) — English rename: the canonical marker list
+# taught here is now DECIDED: / REJECTED: / RULE: / OPEN: / TERM: / STATE: /
+# INSIGHT: (was ...RULE: / TAIL: / TERM:...; the open-item marker's
+# canonical EN spelling is OPEN, not TAIL, and TAIL is no longer taught as
+# a canonical marker here — an untranslated journal's own old TAIL:/ХВОСТ:
+# lines still harvest exactly as before, see bro-lib.sh's marker_type(),
+# this hook just no longer teaches a chat to WRITE it). Every accepted
+# Russian alias is now named ONCE, in a single sentence, instead of paired
+# keyword-by-keyword as before — this text otherwise carries no Cyrillic at
+# all (per the v3.9 plan's own rule: an English-only operator must not see
+# Russian anywhere except as data).
+# v4.0 (coordinator fix, post-3.9-review): a real chat (xovi) read the old
+# "RU/EN must be ALL CAPS" hint as "write the WHOLE state line in caps" and
+# recorded the operator's own state entirely upper-cased. The rule was
+# always "only the label is ALL CAPS", but the hint never said so directly
+# — reworded below to say it explicitly (capitalize ONLY the label, never
+# the sentence after it) for both STATE: and INSIGHT:.
+CTX="$CTX Journal format: a section is '## HH:MM · <work thread> — <topic with a distinguishing detail>' (HH:MM from date) followed by free text and typed markers on their own lines: DECIDED: / REJECTED: / RULE: / OPEN: / TERM: / STATE: / INSIGHT: — harvest moves them into the registers automatically. Russian aliases are also accepted: РЕШЕНИЕ: / ОТКАЗ: / ПРАВИЛО: / ДЕЛО: / ТЕРМИН: / ЗАКРЫТ: / СОСТОЯНИЕ: / ИНСАЙТ:. Write STATE: when the operator's mood, energy, or work mode changes — capitalize ONLY the label itself (STATE:), never the sentence after it; one side per line (several STATE: lines in the same section become several sides of one snapshot); a Title-case label like 'State:' is read as ordinary prose, not a marker. Write INSIGHT: for a pattern, idea, or new approach worth not losing — same rule, capitalize ONLY the label (INSIGHT:) — bold the conclusion inside otherwise-ordinary text, 1–4 sentences, one line. Close an open item with CLOSED <its exact id from open.md>: <what closed it> — no colon between the keyword and the id, harvest only reads the text before the FIRST colon as keyword+id; never hand-edit open.md; an id harvest can't find open is logged as a CLOSE-MISS, not silently lost. NEVER Write/Edit the journal file directly any more (the write guard denies it) — add a section with Bash: printf '%s\n' 'body text — one or more marker lines allowed' | ~/.claude/bro/bin/bro-append.sh --workspace $WS --thread '<work thread>' --topic '<topic>' — it stamps HH:MM from the real clock itself, validates the body before writing, and appends atomically under a lock. Keep the journal current — the stop hook enforces freshness."
 if [ -f "$CONFIG" ] && [ "$HAS_JQ" = 1 ] && ! jq empty "$CONFIG" 2>/dev/null; then
   CTX="$CTX WARNING: ~/.claude/bro-config.json is broken JSON — bro is running on defaults; tell the user."
 fi
@@ -401,12 +452,12 @@ fi
 cnt() { local c; c=$(grep -c "$1" "$2" 2>/dev/null || true); [ -n "$c" ] || c=0; printf '%s' "$c" | head -1; }
 NOPEN=$(cnt '^- \[ \]' "$WS_DIR/open.md")
 [ "$NOPEN" -gt 0 ] 2>/dev/null && CTX="$CTX Open items: $NOPEN unchecked."
-# v3.7 (§1): a CLOSED:/ЗАКРЫТ: marker naming an id not open in this
+# v3.7 (§1): a CLOSED (RU: ЗАКРЫТ) marker naming an id not open in this
 # workspace's open.md is logged, not dropped — surface the count every
 # session so it's never only visible by opening the log file by hand.
 NMISS=0
 [ -f "$WS_DIR/.close-misses.log" ] && NMISS=$(wc -l < "$WS_DIR/.close-misses.log" | tr -d ' ')
-[ "$NMISS" -gt 0 ] 2>/dev/null && CTX="$CTX CLOSE-MISS: $NMISS CLOSED:/ЗАКРЫТ: marker(s) named a tail id not found open in open.md — see $WS_DIR/.close-misses.log."
+[ "$NMISS" -gt 0 ] 2>/dev/null && CTX="$CTX CLOSE-MISS: $NMISS CLOSED marker(s) named an open item id that is not currently open in open.md — see $WS_DIR/.close-misses.log."
 NRULE=$(cnt '^- \[ \]' "$ROOT/_rule-candidates.md")
 [ "$NRULE" -gt 0 ] 2>/dev/null && CTX="$CTX Rule candidates pending operator confirmation: $NRULE in $ROOT/_rule-candidates.md."
 # review cadence: queue >= 10 OR 7+ days since last review with a non-empty queue
@@ -420,7 +471,12 @@ REVDAYS=$(( ( $(date +%s) - LASTSEC ) / 86400 ))
 if [ "$NRULE" -ge 10 ] 2>/dev/null || { [ "$NRULE" -gt 0 ] 2>/dev/null && [ "$REVDAYS" -ge 7 ]; }; then
   CTX="$CTX RULE REVIEW DUE (queue $NRULE, last review ${REVDAYS}d ago; trigger: >=10 or 7d): propose a batched review to the operator this session — group duplicates, recommend verdicts, they answer yes/no. After the review run: date +%F > $ROOT/.last-rule-review"
 fi
-NDUE=$(awk -v today="$TODAY" '/\*\*Пересмотр:\*\*/ { if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) { d=substr($0,RSTART,RLENGTH); if (d<=today) n++ } } END{print n+0}' "$ROOT/_principles.md" 2>/dev/null)
+# v3.9 (§3) — _principles.md is the operator's own text and is never
+# rewritten by this hook, but it may use either the RU field name or the EN
+# one (scripts/bro-translate-registers.sh translates the register
+# boilerplate, never this file) — matched under either name, same shape as
+# bro-harvest.sh's own INDEX.md "Reviews due" scan.
+NDUE=$(awk -v today="$TODAY" '/\*\*(Пересмотр|Review):\*\*/ { if (match($0, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) { d=substr($0,RSTART,RLENGTH); if (d<=today) n++ } } END{print n+0}' "$ROOT/_principles.md" 2>/dev/null)
 [ "$NDUE" -gt 0 ] 2>/dev/null && CTX="$CTX Principle reviews DUE: $NDUE (list in INDEX.md, section Reviews due) — walk the operator through them: alive → extend the date with a longer interval; stale → supersede."
 [ -f "$ROOT/CONFLICTS.md" ] && CTX="$CTX NOTE: $ROOT/CONFLICTS.md exists — unresolved principle-merge conflicts."
 
@@ -432,25 +488,30 @@ NDUE=$(awk -v today="$TODAY" '/\*\*Пересмотр:\*\*/ { if (match($0, /[0-
 # with no context at all.
 #
 # v3.8, coordinator fix after review #3: "last 10" means last by the
-# insight's OWN "родился: <date>", not by its position in the file. A
+# insight's OWN origin date, not by its position in the file. A
 # --full re-parse of an old chronicle can APPEND an old insight after ones
 # already in the register (harvest only ever appends, never reorders — see
 # bro-harvest.sh), so file order alone would surface a years-old insight as
 # the "newest". Below: pull the date out of each line with awk (anchored on
-# the literal "родился: " keyword via match()+substr() on ASCII-only output
-# — never a hand-counted byte offset past the preceding Cyrillic text; see
-# bro-lib.sh's own header for why that specific shortcut is unsafe under
-# this awk), pair it with the line's own position (NR) as an explicit
-# tiebreaker, sort by (date, NR) — no reliance on `sort`'s stability, the
-# tiebreaker is already a real sort key — then take the last 10 and drop
-# the two sort-key columns back off.
+# the literal origin-signature keyword via match()+substr() on ASCII-only
+# output — never a hand-counted byte offset past any preceding Cyrillic
+# text; see bro-lib.sh's own header for why that specific shortcut is
+# unsafe under this awk), pair it with the line's own position (NR) as an
+# explicit tiebreaker, sort by (date, NR) — no reliance on `sort`'s
+# stability, the tiebreaker is already a real sort key — then take the
+# last 10 and drop the two sort-key columns back off.
+# v3.9 (§3) — bro-harvest.sh now signs a freshly written insight "— from:
+# <date>" (was "— родился: <date>"); an untranslated store's older records
+# still carry the old RU signature. Both the awk match below and the sed
+# reformat further down accept either keyword, so "last 10" sorts and
+# displays correctly no matter which signature a given line carries.
 INS_FILE="$WS_DIR/insights.md"
 if [ -f "$INS_FILE" ]; then
   INS_TAB=$(printf '\t')
   INS_KEYED=$(grep '^- \*\*i-' "$INS_FILE" 2>/dev/null | awk -v OFS="$INS_TAB" '
     {
       date = "0000-00-00"
-      if (match($0, /родился: [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
+      if (match($0, /(родился|from): [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) {
         seg = substr($0, RSTART, RLENGTH)
         if (match(seg, /[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/)) date = substr(seg, RSTART, RLENGTH)
       }
@@ -459,14 +520,15 @@ if [ -f "$INS_FILE" ]; then
   if [ -n "$INS_KEYED" ]; then
     INS_LINES=$(printf '%s\n' "$INS_KEYED" | sort -t "$INS_TAB" -k1,1 -k2,2n | tail -n 10 | cut -f3-)
     INS_N=$(printf '%s\n' "$INS_LINES" | wc -l | tr -d ' ')
-    # "- **i-xxxxxx** · <body> — родился: <date> · «<section>»" -> "- <body> (<date>)"
+    # "- **i-xxxxxx** · <body> — from: <date> · «<section>»" (or the old
+    # "— родился: <date>" signature) -> "- <body> (<date>)"
     # the body itself may contain its own em dashes (real insights do — see
     # tests/parts/c-hooks.sh); (.*) is greedy so it always stops at the
-    # LAST " — родился: " on the line, which is the one the register format
-    # itself appends, not anything the body could contain. A line that
-    # doesn't match this shape (hand-edited register, format drift) is
-    # printed unchanged by sed rather than dropped.
-    INS_FMT=$(printf '%s\n' "$INS_LINES" | sed -E 's/^- \*\*i-[^*]+\*\* · (.*) — родился: ([0-9]{4}-[0-9]{2}-[0-9]{2}).*$/- \1 (\2)/')
+    # LAST " — from: "/" — родился: " on the line, which is the one the
+    # register format itself appends, not anything the body could contain.
+    # A line that doesn't match this shape (hand-edited register, format
+    # drift) is printed unchanged by sed rather than dropped.
+    INS_FMT=$(printf '%s\n' "$INS_LINES" | sed -E 's/^- \*\*i-[^*]+\*\* · (.*) — (родился|from): ([0-9]{4}-[0-9]{2}-[0-9]{2}).*$/- \1 (\3)/')
     CTX="$CTX Last $INS_N insight(s) for this workspace (more via search):
 $INS_FMT"
   fi

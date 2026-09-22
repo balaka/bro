@@ -42,6 +42,21 @@ for f in "$SRC_DIR/scripts/bro-lib.sh" "$SRC_DIR"/scripts/hooks/*.sh "$SRC_DIR/s
   b=$(basename "$f")
   cp "$f" "$BIN_DIR/.$b.new" && chmod +x "$BIN_DIR/.$b.new" && mv "$BIN_DIR/.$b.new" "$BIN_DIR/$b"
 done
+# v3.9 (§4 of the v3.9 plan): the register-language converter,
+# scripts/bro-translate-registers.sh — copied the same atomic way as every
+# script above, but only IF this checkout actually has it. Guarded rather
+# than listed unconditionally in the loop above: this installer runs under
+# `set -euo pipefail`, so a `cp` of a file that doesn't exist would abort
+# the WHOLE install (config, store, and every hook registration below,
+# never reached) instead of just skipping one optional script. Guarding it
+# means a checkout that predates the converter keeps installing everything
+# else exactly as before, and the moment the converter lands in scripts/,
+# this same run starts picking it up with no further change here.
+if [ -f "$SRC_DIR/scripts/bro-translate-registers.sh" ]; then
+  cp "$SRC_DIR/scripts/bro-translate-registers.sh" "$BIN_DIR/.bro-translate-registers.sh.new" \
+    && chmod +x "$BIN_DIR/.bro-translate-registers.sh.new" \
+    && mv "$BIN_DIR/.bro-translate-registers.sh.new" "$BIN_DIR/bro-translate-registers.sh"
+fi
 cp "$SRC_DIR/VERSION" "$HOME/.claude/bro/.VERSION.new" && mv "$HOME/.claude/bro/.VERSION.new" "$HOME/.claude/bro/VERSION"
 
 # 2. skill (canonical location); retire the v2 command file if present
@@ -129,5 +144,14 @@ echo ""
 echo "Upgrading from an older 3.x? Optional, ask the operator first (it adds to their registers):"
 echo "  ~/.claude/bro/bin/bro-harvest.sh --all --full"
 echo "re-reads old journals once and picks up markers older versions missed — Capitalized"
-echo "Russian ones (Решение:, Правило:, Хвост:) and journals with a suffix in the name."
+echo "Russian ones (Решение:, Правило:, Хвост:) and journals with a suffix in the name. ДЕЛО"
+echo "(the open-item marker's Russian spelling) is ALL-CAPS only — there is no Capitalized"
+echo "'Дело:' form, unlike the Russian aliases above."
 echo "Only adds, never duplicates; 1–2 minutes on a busy store."
+echo ""
+echo "Translate this store's own service words to English (register headers, origin/closed"
+echo "signatures, _state.md — never the operator's own entries)? Optional, with the store"
+echo "owner's consent: run  ~/.claude/bro/bin/bro-translate-registers.sh --all --dry-run  first"
+echo "to preview, then the same command without --dry-run once you're satisfied — it backs up"
+echo "every file it touches before changing it. An untranslated store keeps working exactly"
+echo "as before either way."

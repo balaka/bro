@@ -43,8 +43,14 @@ model improvising. Same input → same output, on any machine.
 You never have to remember it. The version-check hook compares the skill's
 `VERSION` with `~/bro/.version` on every session start:
 
-- store missing or version lower → the hook injects an instruction to run
-  `/bro migrate`;
+- store missing, or older than v3 → blocks: the hook tells the operator the
+  storage format is outdated and demands `/bro migrate` before any bro entry
+  is written;
+- store exactly one major behind the skill's (a v3 store under a v4 skill)
+  → NOT blocked: the ordinary full session-start text still injects, and
+  harvest still runs normally — one advisory line is added on top, naming
+  `/bro migrate`; see **Updating from 3.x to 4.0**, below, for its exact
+  wording;
 - versions match → silence.
 
 So the flow for any user, including future updates, is: update the skill →
@@ -87,8 +93,8 @@ What to expect after 3.6 → 3.7:
   the denial message itself carries the exact command to run, so a chat
   holding stale skill text in context does not need to re-read anything to
   recover.
-- Closing a `TAIL:`/`ХВОСТ:` item is no longer a hand-edit of `open.md`: a
-  `CLOSED:`/`ЗАКРЫТ:` marker naming the tail's own id closes it through
+- Closing a `TAIL:` item is no longer a hand-edit of `open.md`: a
+  `CLOSED:` marker naming the tail's own id closes it through
   harvest instead. Nothing in `open.md` changes shape or moves — an item
   left `[x]` from before the update is unaffected either way.
 - Harvest's marker parser no longer folds the paragraph after a marker into
@@ -100,8 +106,8 @@ What to expect after 3.6 → 3.7:
 What to expect after 3.7 → 3.8:
 
 - Nothing to migrate: `~/bro/_state.md` and every workspace's `insights.md` are
-  brand new and start out empty. The two new markers, `STATE:`/`СОСТОЯНИЕ:`
-  and `INSIGHT:`/`ИНСАЙТ:`, only exist from this version forward, so there is
+  brand new and start out empty. The two new markers, `STATE:`
+  and `INSIGHT:`, only exist from this version forward, so there is
   nothing in old journals for them to reconcile with. Re-running the
   installer is the whole upgrade, same as every 3.x → 3.y before this one.
 - A chat already open when the update runs keeps its old hook set until it is
@@ -112,10 +118,10 @@ What to expect after 3.7 → 3.8:
   text, not specifically where the command writes), and will not self-create
   a workspace or show the new operator-state/insights blocks in the context
   it already has. Reopen it to pick all of that up.
-- The original six markers now also recognize a Capitalized RU writing
-  (`Решение:`, `Правило:`, …), not only ALL CAPS — `STATE:`/`INSIGHT:` stay
-  ALL-CAPS-only in either language (see SKILL.md's **Journal format** for
-  why). Harvest also now reads a journal filename with a topic suffix
+- The original six markers now also recognize a Capitalized Russian writing,
+  not only ALL CAPS — `STATE:`/`INSIGHT:` stay
+  ALL-CAPS-only in either language (see SKILL.md's **Journal format** and
+  **Russian aliases** for the exact forms and why). Harvest also now reads a journal filename with a topic suffix
   (`2026-04-22-offerings-banner.md`), not only the bare date — before this
   fix such a file was invisible to harvest forever, silently, `--full`
   included. A **full re-harvest of existing journals**
@@ -148,6 +154,24 @@ What to expect after 3.8.0 → 3.8.1:
   Running `--all --full` again on 3.8.1 does not produce any more of
   these — it recognizes the same shape itself now and reuses the existing
   record instead of writing a second one.
+
+## Updating from 3.x to 4.0
+
+Unlike every 3.x → 3.y update above, this one is a real major-version bump: `~/bro/.version` (currently `3`, for any store on 3.4 through 3.8.1) no longer matches the skill's major version (`4`). The version-check hook treats that gap differently from a v1/v2 store's: it does NOT block — the ordinary full session-start text still injects, everything still works, harvest still updates the registers normally — it just prepends one advisory line, verbatim:
+
+> bro: this store is in v3 format — its registers still hold service words in Russian. Run /bro migrate once, with the store owner's consent, to translate them (a backup is made automatically); until then, everything works exactly as before.
+
+1. Re-run the installer (`/bro update`, or the install one-liner again) — same as any update.
+2. Run `~/.claude/bro/bin/bro-migrate.sh --dry-run` with Bash; show the operator the plan.
+3. On their confirmation, run it again without `--dry-run`.
+
+The same script also still runs the legacy v1/v2 → v3 path above first, in the same invocation, if it finds any storages left to migrate — "old path, then 3 → 4" is the order when a machine has both, not a choice between them.
+
+What the 3 → 4 part does: it calls `bro-translate-registers.sh --all` itself (`--dry-run` previews it exactly the same way, through the same call) — translating the registers' own service words to English (see **Translating an existing store to English**, above, for exactly which ones), never the operator's own decisions, open items, terms, insights or principles. Every file it's about to change is backed up first by that same call, unmodified, to `_archive/pre-english-<timestamp>/`. `~/bro/.version` becomes `4` only once that call finishes without an error — a failed or partial run leaves the store at `3`, so a later `/bro migrate` picks up exactly where this one left off, never silently claiming success. Once the store reads `4`, running `/bro migrate` again does nothing.
+
+What happens if you skip it: nothing breaks, ever. A v3 store is read, harvested and written to exactly the same as a v4 one — every reader in this codebase already understands both the old Russian service words and the new English ones (see SKILL.md's **Russian aliases**). The only visible effect is that one advisory line at the start of every chat, until `/bro migrate` is run.
+
+The marker rename itself needs no migration either way: `OPEN:` is the new canonical spelling of what was `TAIL:`, but `TAIL:`, `ХВОСТ:` and `Хвост:` keep being read exactly as before, forever, whether or not the store is ever migrated.
 
 ## After migration
 

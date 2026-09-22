@@ -82,10 +82,19 @@ fi
 WS_DIR="$ROOT/$WS"
 [ -d "$WS_DIR" ] || exit 0
 
-# an outdated store is migrated first, never harvested into
-SKILL_MAJOR=$(cut -d. -f1 "$HOME/.claude/bro/VERSION" 2>/dev/null || echo 3)
+# an outdated store is migrated first, never harvested into.
+# v4.0 (coordinator fix, post-3.9-review): this used to skip harvesting
+# whenever the store's major was behind the INSTALLED SKILL's major — fine
+# while the skill was v3, but the moment the skill became v4 that same
+# check would ALSO skip every still-untranslated v3 store, silently
+# stopping decisions.md/open.md/vocab.md/insights.md from ever filling in
+# again until the operator ran /bro migrate. A v3 store is fully readable
+# by bro-harvest.sh (bilingual RU/EN register reads shipped in v3.9) — only
+# a genuinely incompatible store (pre-3, a different on-disk architecture)
+# should skip harvesting here, same hard-coded-3 threshold
+# bro-session-start.sh's own version check now uses, for the same reason.
 STORE_MAJOR=$(cat "$ROOT/.version" 2>/dev/null || echo 0)
-[ "$STORE_MAJOR" -lt "$SKILL_MAJOR" ] 2>/dev/null && exit 0
+[ "$STORE_MAJOR" -lt 3 ] 2>/dev/null && exit 0
 
 HARVEST="$(dirname "$0")/bro-harvest.sh"
 [ -x "$HARVEST" ] || HARVEST="$HOME/.claude/bro/bin/bro-harvest.sh"

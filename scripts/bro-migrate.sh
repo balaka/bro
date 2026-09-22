@@ -41,7 +41,17 @@ ROOT="${ROOT/#\~/$HOME}"
 
 TS=$(date +%Y%m%d-%H%M%S)
 # one source of truth for the store major: the installed skill VERSION
-STORE_VERSION_REQUIRED=$(cut -d. -f1 "$HOME/.claude/bro/VERSION" 2>/dev/null || echo 3)
+STORE_VERSION_REQUIRED=$(cut -d. -f1 "$HOME/.claude/bro/VERSION" 2>/dev/null || echo 4)
+# v4.0 (operator's own decision, 22 Sep 2026, §2 of the v4.0 fix-up):
+# captured HERE, before either migration path below runs, so a store that
+# STARTS at v3 is still correctly detected as "needs the 3 -> 4
+# register-language translation" even when this SAME run also finds and
+# migrates legacy v1/v2 storages into it — the legacy path below (further
+# down, unchanged) stamps .version to STORE_VERSION_REQUIRED directly on
+# completion; by the time that write happens, this snapshot has already
+# been taken, so a pre-existing v3 store sitting next to freshly-migrated
+# legacy ones is never silently skipped.
+STORE_MAJOR_AT_START=$(cat "$ROOT/.version" 2>/dev/null || echo 0)
 
 say()  { echo "[bro-migrate] $*"; }
 act()  { if [ "$DRY_RUN" = 1 ]; then echo "  DRY: $*"; else "$@"; fi }
@@ -68,11 +78,19 @@ while IFS= read -r d; do
   is_legacy_storage "$d" && LEGACY+=("$d")
 done < <(find "${SEARCH_PATHS[@]}" -maxdepth 5 -type d -name bro -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null | sort)
 
+# v4.0 (§2): this used to `exit 0` right here when no legacy storage was
+# found — correct back when this script had only the v1/v2 -> v3 path, but
+# now it would ALSO skip the v3 -> v4 section further down on every machine
+# that has no legacy v1/v2 folders left (the common case for an operator
+# already on v3, wanting to reach v4). Falls through to an `else` that
+# wraps the REST of this legacy-specific path instead (workspace naming
+# through the index/version write below) — deliberately not re-indented,
+# to keep this diff reviewable; bash does not care. Closed by the matching
+# `fi` right after this path's own "done" line, below the index/version
+# section.
 if [ ${#LEGACY[@]} -eq 0 ]; then
-  say "no legacy storages found. Nothing to do."
-  exit 0
-fi
-
+  say "no legacy (v1/v2) storages found under: ${SEARCH_PATHS[*]} — nothing to do on that path."
+else
 say "found ${#LEGACY[@]} legacy storage(s):"
 for d in "${LEGACY[@]}"; do echo "    $d"; done
 
@@ -250,6 +268,66 @@ if [ "$DRY_RUN" = 0 ]; then
   echo "$STORE_VERSION_REQUIRED" > "$ROOT/.version"
 fi
 
-say "done: migrated=$MIGRATED skipped=$SKIPPED backup=$BACKUP"
-[ "$DRY_RUN" = 1 ] && say "dry run — nothing was changed."
+say "legacy (v1/v2 -> v3) path done: migrated=$MIGRATED skipped=$SKIPPED backup=$BACKUP"
+[ "$DRY_RUN" = 1 ] && say "dry run — nothing was changed on that path."
+fi   # closes the "if [ ${#LEGACY[@]} -eq 0 ]; then ... else" opened above
+
+# ===========================================================================
+# v3 -> v4 (operator's own decision, 22 Sep 2026, §2 of the v4.0 fix-up):
+# translates an existing v3 store's REGISTER service words to English via
+# scripts/bro-translate-registers.sh — the v1/v2 -> v3 path above is a
+# different transition entirely (different on-disk architecture, not just a
+# language) and is untouched by this section.
+#
+# STORE_MAJOR_AT_START (captured at the very top of this script, before
+# either path ran) decides whether this runs, not a fresh re-read of
+# .version: the legacy path above, when it ran, already stamped .version to
+# STORE_VERSION_REQUIRED directly on completion (a store it just migrated
+# today has no PRE-EXISTING registers of its own to translate — the first
+# harvest pass over its freshly-placed journals already writes English,
+# same as any other current-codebase workspace) — re-reading .version here
+# would see that fresh stamp and wrongly conclude "already v4, nothing to
+# do" even when this SAME run also needs to translate a separate,
+# pre-existing v3 store that was sitting right there before either path
+# started. Runs whether or not the legacy path above found anything to do —
+# "old path, then 3 -> 4" (coordinator's own wording) means chronological
+# ORDER when a machine has both, not "only one or the other" — and by
+# running strictly AFTER the legacy path's own code above, a --all
+# translate pass here also covers any workspace that path just created
+# (harmless: freshly-harvested registers are already English, so those
+# files simply count as "already English" below).
+#
+# --dry-run: run bro-translate-registers.sh --all --dry-run and print its
+# own summary — .version is left untouched either way.
+# without --dry-run: run bro-translate-registers.sh --all (it makes its own
+# backup, under $ROOT/_archive/, before changing anything) and ONLY on a
+# clean (exit 0) finish does .version become 4 — a failed or partial run
+# leaves the store at v3, so a re-run of /bro migrate later picks up
+# exactly where this one left off rather than silently claiming success.
+if [ -d "$ROOT" ]; then
+  if [ "$STORE_MAJOR_AT_START" = "3" ]; then
+    TRANSLATE="$(dirname "$0")/bro-translate-registers.sh"
+    [ -x "$TRANSLATE" ] || TRANSLATE="$HOME/.claude/bro/bin/bro-translate-registers.sh"
+    if [ ! -x "$TRANSLATE" ]; then
+      say "v3 -> v4: store $ROOT is v3, but bro-translate-registers.sh was not found next to $0 or in ~/.claude/bro/bin/ — reinstall (bro-install.sh) and run /bro migrate again."
+    elif [ "$DRY_RUN" = 1 ]; then
+      say "v3 -> v4: store $ROOT is v3 — previewing 'bro-translate-registers.sh --all --dry-run':"
+      "$TRANSLATE" --root "$ROOT" --all --dry-run \
+        || say "v3 -> v4: bro-translate-registers.sh --dry-run exited with an error (see its own output above)."
+      say "v3 -> v4: dry run — nothing written, $ROOT/.version stays 3. Re-run without --dry-run, with the store owner's consent, to translate for real (bro-translate-registers.sh makes its own backup first)."
+    else
+      say "v3 -> v4: store $ROOT is v3 — running 'bro-translate-registers.sh --all' (it backs itself up before changing anything):"
+      if "$TRANSLATE" --root "$ROOT" --all; then
+        echo "4" > "$ROOT/.version"
+        say "v3 -> v4: translation finished without errors — $ROOT/.version is now 4."
+      else
+        say "v3 -> v4: bro-translate-registers.sh exited with an error (see its own output above) — $ROOT/.version left at 3, nothing else changed. Fix the problem and run /bro migrate again."
+      fi
+    fi
+  elif [ "$STORE_MAJOR_AT_START" = "4" ]; then
+    say "v3 -> v4: store $ROOT is already v4 — nothing to do."
+  fi
+fi
+
+say "done."
 exit 0

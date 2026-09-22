@@ -1,4 +1,7 @@
-# bro v3.8 — tests/parts/c-hooks.sh (Сборщик В: §3, §4, §5/§6-opening, marker hints)
+# bro v3.9 — tests/parts/c-hooks.sh (builder V: §3, §4, §5/§6-opening,
+# marker hints, plus the v3.9 English rename in this file's own four
+# scripts: bro-session-start.sh, bro-stop-turnstile.sh,
+# bro-harvest-hook.sh, bro-install.sh)
 #
 # Sourced by tests/regress.sh AFTER the main suite's own sections — shares
 # its helpers (pass/fail, assert_*, new_sandbox, install_repo, mkws,
@@ -17,7 +20,25 @@
 #             its age, and never breaks the hook (§5, opening half)
 #   C12     — last 10 insights in the opening text, never more (§6, opening half)
 #   C13     — the opening text's marker list teaches STATE:/INSIGHT: with
-#             a hint on when to write each (§"Общее")
+#             a hint on when to write each (§General, plan-v3.8)
+#   C24-C25 — v3.9 English rename: the opening text teaches OPEN: (not
+#             TAIL:) as the canonical open-item marker, and carries no
+#             Cyrillic outside the one Russian-aliases sentence (v3.9 §1, §5)
+#   C26     — v3.9: the operator-state snapshot also reads the NEW
+#             "# Operator state" / "recorded:" _state.md, not just the old
+#             "# Состояние оператора" / "записано:" one already covered by
+#             C10 (v3.9 §3)
+#   C27     — v3.9: the last-10-insights list reads insights signed either
+#             the old "— родился:" way or the new "— from:" way (v3.9 §3)
+#   C28     — v3.9: the overdue-principle-review count reads the English
+#             "**Review:**" field too, not just "**Пересмотр:**" (v3.9 §3)
+#   C29     — coordinator fix (post-3.9-review): the CLOSE-MISS line in the
+#             opening text no longer carries a "(RU: ЗАКРЫТ)" parenthetical
+#             — Cyrillic stays confined to the one Russian-aliases sentence
+#             even when .close-misses.log is non-empty
+#   C30-C31 — v4.0: a v3 store under skill v4 gets the full opening text
+#             plus one advisory line (not a block); a genuinely
+#             incompatible (pre-3) store still blocks, unchanged
 
 # ===========================================================================
 # C1. installer: Stop group registers bro-harvest-hook.sh (async) alongside
@@ -377,7 +398,7 @@ assert_contains "C12b: empty insights.md -> normal opening text" "$OUT_C12D" "wo
 assert_not_contains "C12b: ...and no stray 'Last N insight' line" "$OUT_C12D" "insight(s) for this workspace"
 
 # ===========================================================================
-# C13. opening text's marker list teaches STATE:/INSIGHT: with a hint (§Общее)
+# C13. opening text's marker list teaches STATE:/INSIGHT: with a hint (§General, plan-v3.8)
 # ===========================================================================
 echo "-- C13. session-start: marker list teaches STATE:/INSIGHT: and when to write them --"
 new_sandbox
@@ -703,3 +724,255 @@ rm -rf "$FAKEGIT_C23"
 # kernel wait (unsimulable in a portable test, see 23a's own comment).
 TIMEOUT_BRANCH_C23=$(awk '/kill_tree "\$cmd_pid"/{p=1} p{print} p&&/return 1/{exit}' "$BIN/bro-session-start.sh")
 assert_not_contains "C23b: the timeout branch calls kill_tree then returns, with no wait() in between" "$TIMEOUT_BRANCH_C23" "wait \"\$cmd_pid\""
+
+# ===========================================================================
+# C24-C25. v3.9 English rename (§1, §5 of the v3.9 plan): the opening text
+# teaches OPEN: as the canonical open-item marker, not TAIL:, and carries
+# no Cyrillic anywhere except the one Russian-aliases sentence
+# ===========================================================================
+echo "-- C24. session-start: opening text teaches OPEN:, not TAIL:, as the canonical open-item marker --"
+new_sandbox
+install_repo >/dev/null
+mkws ws24
+SID_C24=$(next_sid)
+OUT_C24=$(hookjson "$(proj_dir ws24)" "$SID_C24" p1 SessionStart | "$BIN/bro-session-start.sh")
+CTXTXT_C24=$(printf '%s' "$OUT_C24" | jq -r '.hookSpecificOutput.additionalContext')
+assert_contains "C24: marker list includes the canonical OPEN:" "$CTXTXT_C24" "OPEN:"
+assert_not_contains "C24: TAIL: is no longer taught as a canonical marker" "$CTXTXT_C24" "TAIL:"
+assert_contains "C24: RU alias ДЕЛО: is taught (ALL-CAPS, the new RU spelling)" "$CTXTXT_C24" "ДЕЛО:"
+assert_contains "C24: still teaches the CLOSED <id>: syntax (no colon before the id)" "$CTXTXT_C24" "CLOSED <its exact id from open.md>:"
+assert_not_contains "C24: still does NOT teach the broken 'CLOSED: <id>:' syntax" "$CTXTXT_C24" "CLOSED: <its exact id"
+# still teaches every other canonical marker -- OPEN's arrival must not
+# have pushed one of its neighbors out of the list
+for kw in "DECIDED:" "REJECTED:" "RULE:" "TERM:" "STATE:" "INSIGHT:"; do
+  assert_contains "C24: canonical marker $kw is still taught" "$CTXTXT_C24" "$kw"
+done
+
+echo "-- C25. session-start: opening text carries no Cyrillic outside the eight accepted Russian alias keywords --"
+new_sandbox
+install_repo >/dev/null
+mkws ws25
+SID_C25=$(next_sid)
+OUT_C25=$(hookjson "$(proj_dir ws25)" "$SID_C25" p1 SessionStart | "$BIN/bro-session-start.sh")
+CTXTXT_C25=$(printf '%s' "$OUT_C25" | jq -r '.hookSpecificOutput.additionalContext')
+assert_contains "C25: sanity -- the opening text does teach the Russian aliases" "$CTXTXT_C25" "РЕШЕНИЕ"
+# Strip the eight accepted Russian alias keywords (with or without their
+# trailing colon) -- the ONE place this text is allowed to carry Cyrillic
+# (v3.9 plan's own rule: an English-only operator must not see Russian
+# anywhere except as data) -- then check nothing Cyrillic is left.
+# NB: not a plain `grep -c '[А-Яа-яЁё]'` -- under the unset/"C" locale this
+# suite runs under, this system's BSD grep mis-widens that multi-byte
+# bracket range and also matches the em-dash/arrow bytes this file's own
+# English text legitimately uses (same root cause as tests/regress.sh's own
+# note next to its '**Пересмотр:**' INDEX.md check). Matching the raw UTF-8
+# lead byte of the Cyrillic block (0xD0/0xD1) under an explicit C locale
+# sidesteps that bug and needs no UTF-8 locale installed -- same discipline
+# already used there and in bro-lib.sh's own utf8_trunc().
+STRIPPED_C25=$(printf '%s' "$CTXTXT_C25" | sed -E 's/(РЕШЕНИЕ|ОТКАЗ|ПРАВИЛО|ДЕЛО|ТЕРМИН|ЗАКРЫТ|СОСТОЯНИЕ|ИНСАЙТ):?//g')
+CYRLEFT_C25=$(printf '%s' "$STRIPPED_C25" | LC_ALL=C grep -c $'[\xd0\xd1]' 2>/dev/null)
+[ -n "$CYRLEFT_C25" ] || CYRLEFT_C25=0
+assert_eq "C25: no Cyrillic anywhere in the opening text once the eight accepted alias keywords are removed" "$CYRLEFT_C25" "0"
+
+# ===========================================================================
+# C26. v3.9 (§3): the operator-state snapshot also reads the NEW English
+# _state.md ("# Operator state" / "recorded:") -- C10 above already covers
+# the OLD Russian one ("# Состояние оператора" / "записано:") and must keep
+# passing unchanged; this is the other half of the same bilingual read.
+# ===========================================================================
+echo "-- C26. session-start: the STATE snapshot also reads the NEW English _state.md ('recorded:'/'# Operator state') --"
+new_sandbox
+install_repo >/dev/null
+mkws ws26
+PROJ_C26=$(proj_dir ws26)
+TS_C26=$(( $(date +%s) - 2*3600 ))   # 2 hours ago
+cat > "$ROOT/_state.md" <<EOF
+# Operator state
+<!-- ts: $TS_C26 2026-09-21 15:10 -->
+<!-- written by bro-harvest; do not edit by hand -->
+recorded: 2026-09-21 15:10 · project ws26 · «15:10 · bro — v3.9 build»
+- focused
+- wants short answers
+EOF
+SID_C26=$(next_sid)
+OUT_C26=$(hookjson "$PROJ_C26" "$SID_C26" p1 SessionStart | "$BIN/bro-session-start.sh")
+CTXTXT_C26=$(printf '%s' "$OUT_C26" | jq -r '.hookSpecificOutput.additionalContext')
+case "$CTXTXT_C26" in
+  "bro OPERATOR STATE"*) pass "C26: opening text STARTS with the operator-state block from the new English _state.md" ;;
+  *) fail "C26: opening text STARTS with the operator-state block from the new English _state.md" "starts with: $(printf '%s' "$CTXTXT_C26" | head -c 80)" ;;
+esac
+assert_contains "C26: names its age in hours" "$CTXTXT_C26" "(2h ago)"
+assert_contains "C26: shows the recorded line" "$CTXTXT_C26" "project ws26"
+assert_contains "C26: shows side 1" "$CTXTXT_C26" "focused"
+assert_contains "C26: shows side 2" "$CTXTXT_C26" "wants short answers"
+
+# ===========================================================================
+# C27. v3.9 (§3): last-10 insights reads BOTH the old "— родился:" and the
+# new "— from:" origin signature -- neither is dropped, and both format the
+# same way ("- <body> (<date>)")
+# ===========================================================================
+echo "-- C27. session-start: last-10 insights read BOTH the old '— родился:' and new '— from:' signatures --"
+new_sandbox
+install_repo >/dev/null
+mkws ws27
+PROJ_C27=$(proj_dir ws27)
+DATE_C27=$(date +%F)
+cat > "$ROOT/ws27/insights.md" <<EOF
+# ws27 — insights
+
+- **i-100001** · old-signature insight, written before the store was translated — родился: $DATE_C27 · «09:01 · t — a»
+- **i-100002** · new-signature insight, written after the register converter ran — from: $DATE_C27 · «09:02 · t — b»
+EOF
+SID_C27=$(next_sid)
+OUT_C27=$(hookjson "$PROJ_C27" "$SID_C27" p1 SessionStart | "$BIN/bro-session-start.sh" | jq -r '.hookSpecificOutput.additionalContext')
+assert_contains "C27: an insight signed the OLD way ('— родился:') is shown, correctly formatted" "$OUT_C27" "- old-signature insight, written before the store was translated ($DATE_C27)"
+assert_contains "C27: an insight signed the NEW way ('— from:') is shown, correctly formatted" "$OUT_C27" "- new-signature insight, written after the register converter ran ($DATE_C27)"
+N_C27=$(printf '%s' "$OUT_C27" | grep -cE '^- (old-signature|new-signature)')
+assert_eq "C27: both insights counted (2), neither dropped by the signature it happens to carry" "$N_C27" "2"
+
+# ===========================================================================
+# C28. v3.9 (§3): the overdue-principle-review count reads the English
+# "**Review:**" field too, not just the Russian "**Пересмотр:**" one --
+# mirrors the coverage tests/regress.sh's own top-level suite already has
+# for bro-harvest.sh's INDEX.md generation, but for THIS hook's own
+# independent NDUE scan.
+# ===========================================================================
+echo "-- C28. session-start: overdue-review count reads the English '**Review:**' field too, not just '**Пересмотр:**' --"
+new_sandbox
+install_repo >/dev/null
+mkws ws28
+PASTDATE_C28="2020-01-01"
+cat > "$ROOT/_principles.md" <<EOF
+# principles
+
+### 1. english-fielded principle
+**Category:** speech
+**Rule:** say it plainly
+**Origin:** 2026-01-01
+**Enforcement:** none yet
+**Bounds:** —
+**Review:** $PASTDATE_C28
+EOF
+SID_C28=$(next_sid)
+OUT_C28=$(hookjson "$(proj_dir ws28)" "$SID_C28" p1 SessionStart | "$BIN/bro-session-start.sh")
+assert_contains "C28: an English-fielded ('**Review:**') overdue principle is counted" "$OUT_C28" "Principle reviews DUE: 1"
+
+# a Russian-fielded ('**Пересмотр:**') principle must still be counted too --
+# regression check, this already worked before v3.9 and must keep working
+new_sandbox
+install_repo >/dev/null
+mkws ws28r
+cat > "$ROOT/_principles.md" <<EOF
+# принципы
+
+### 1. russian-fielded principle
+**Категория:** речь
+**Правило:** говори по делу
+**Родилось:** 2026-01-01
+**Исполнение:** пока нет
+**Границы:** —
+**Пересмотр:** $PASTDATE_C28
+EOF
+SID_C28R=$(next_sid)
+OUT_C28R=$(hookjson "$(proj_dir ws28r)" "$SID_C28R" p1 SessionStart | "$BIN/bro-session-start.sh")
+assert_contains "C28: a Russian-fielded ('**Пересмотр:**') overdue principle is STILL counted (regression)" "$OUT_C28R" "Principle reviews DUE: 1"
+
+# both languages in ONE store must sum together, not just whichever the
+# awk pattern happens to try first
+new_sandbox
+install_repo >/dev/null
+mkws ws28m
+cat > "$ROOT/_principles.md" <<EOF
+# principles
+
+### 1. english-fielded
+**Category:** speech
+**Rule:** say it plainly
+**Origin:** 2026-01-01
+**Enforcement:** none yet
+**Bounds:** —
+**Review:** $PASTDATE_C28
+
+### 2. russian-fielded
+**Категория:** речь
+**Правило:** говори по делу
+**Родилось:** 2026-01-01
+**Исполнение:** пока нет
+**Границы:** —
+**Пересмотр:** $PASTDATE_C28
+EOF
+SID_C28M=$(next_sid)
+OUT_C28M=$(hookjson "$(proj_dir ws28m)" "$SID_C28M" p1 SessionStart | "$BIN/bro-session-start.sh")
+assert_contains "C28: mixed-language store sums BOTH overdue principles (2), not just one" "$OUT_C28M" "Principle reviews DUE: 2"
+
+# ===========================================================================
+# C29. coordinator fix (post-3.9-review): the CLOSE-MISS line in the opening
+# text used to carry a "(RU: ЗАКРЫТ)" parenthetical -- Cyrillic outside the
+# ONE sentence that names the Russian aliases (§5). Real store impact: an
+# operator with a non-empty .close-misses.log sees this line on EVERY
+# session in that project, so it's not an edge case. ЗАКРЫТ is already named
+# once in the Russian-aliases sentence -- no need to repeat it here.
+# ===========================================================================
+echo "-- C29. session-start: with a non-empty .close-misses.log, the opening text has no Cyrillic outside the Russian-aliases sentence --"
+new_sandbox
+install_repo >/dev/null
+mkws ws29
+printf '2026-01-01 00:00\tt-doesnotexist\tabcdef\tsome body\n' > "$ROOT/ws29/.close-misses.log"
+SID_C29=$(next_sid)
+OUT_C29=$(hookjson "$(proj_dir ws29)" "$SID_C29" p1 SessionStart | "$BIN/bro-session-start.sh")
+CTXTXT_C29=$(printf '%s' "$OUT_C29" | jq -r '.hookSpecificOutput.additionalContext')
+assert_contains "C29: CLOSE-MISS line appears (sanity -- the seeded log is being read)" "$CTXTXT_C29" "CLOSE-MISS: 1 CLOSED marker(s)"
+assert_contains "C29: reworded -- 'an open item id that is not currently open in open.md'" "$CTXTXT_C29" "an open item id that is not currently open in open.md"
+assert_not_contains "C29: no '(RU: ЗАКРЫТ)' parenthetical -- ЗАКРЫТ is already in the one Russian-aliases sentence" "$CTXTXT_C29" "ЗАКРЫТ)"
+# same byte-safe technique as C25 above -- see its own comment for why this
+# is not a plain `grep -c '[А-Яа-яЁё]'`.
+STRIPPED_C29=$(printf '%s' "$CTXTXT_C29" | sed -E 's/(РЕШЕНИЕ|ОТКАЗ|ПРАВИЛО|ДЕЛО|ТЕРМИН|ЗАКРЫТ|СОСТОЯНИЕ|ИНСАЙТ):?//g')
+CYRLEFT_C29=$(printf '%s' "$STRIPPED_C29" | LC_ALL=C grep -c $'[\xd0\xd1]' 2>/dev/null)
+[ -n "$CYRLEFT_C29" ] || CYRLEFT_C29=0
+assert_eq "C29: no Cyrillic anywhere in the opening text (CLOSE-MISS line included) once the eight accepted alias keywords are removed" "$CYRLEFT_C29" "0"
+
+# ===========================================================================
+# C30-C31. v4.0 (coordinator fix, post-3.9-review, §1 of the v4.0 fix-up):
+# a store one major behind the skill (v3 under skill v4) is fully
+# functional, not blocked — only a genuinely incompatible (pre-3) store
+# still blocks the way v3.x always did.
+# ===========================================================================
+echo "-- C30. session-start: a v3 store under skill v4 gets the FULL opening text plus one advisory line, not a block --"
+new_sandbox
+install_repo >/dev/null
+mkws ws30
+echo "3" > "$ROOT/.version"
+SID_C30=$(next_sid)
+OUT_C30=$(hookjson "$(proj_dir ws30)" "$SID_C30" p1 SessionStart | "$BIN/bro-session-start.sh")
+CTXTXT_C30=$(printf '%s' "$OUT_C30" | jq -r '.hookSpecificOutput.additionalContext')
+assert_not_contains "C30: does NOT block with STORAGE FORMAT OUTDATED" "$CTXTXT_C30" "STORAGE FORMAT OUTDATED"
+assert_contains "C30: still produces the FULL opening text (workspace resolved)" "$CTXTXT_C30" "workspace 'ws30'"
+assert_contains "C30: still teaches bro-append.sh" "$CTXTXT_C30" "bro-append.sh"
+assert_contains "C30: advisory line names the format" "$CTXTXT_C30" "this store is in v3 format"
+assert_contains "C30: advisory line names the fix" "$CTXTXT_C30" "Run /bro migrate once"
+assert_contains "C30: advisory comes BEFORE the ordinary opening text" "$CTXTXT_C30" "exactly as before.
+
+bro v"
+VER_C30=$(cat "$ROOT/.version")
+assert_eq "C30: .version is left at 3 -- session-start never migrates anything itself" "$VER_C30" "3"
+# same byte-safe Cyrillic-scope check as C25/C29 above -- the new advisory
+# line must not have smuggled in any stray Cyrillic of its own
+STRIPPED_C30=$(printf '%s' "$CTXTXT_C30" | sed -E 's/(РЕШЕНИЕ|ОТКАЗ|ПРАВИЛО|ДЕЛО|ТЕРМИН|ЗАКРЫТ|СОСТОЯНИЕ|ИНСАЙТ):?//g')
+CYRLEFT_C30=$(printf '%s' "$STRIPPED_C30" | LC_ALL=C grep -c $'[\xd0\xd1]' 2>/dev/null)
+[ -n "$CYRLEFT_C30" ] || CYRLEFT_C30=0
+assert_eq "C30: no Cyrillic anywhere in the opening text (v3 advisory included) once the eight accepted alias keywords are removed" "$CYRLEFT_C30" "0"
+
+echo "-- C31. session-start: a genuinely incompatible (pre-3) store still blocks, unchanged --"
+new_sandbox
+install_repo >/dev/null
+mkws ws31
+echo "2" > "$ROOT/.version"
+SID_C31=$(next_sid)
+OUT_C31=$(hookjson "$(proj_dir ws31)" "$SID_C31" p1 SessionStart | "$BIN/bro-session-start.sh")
+CTXTXT_C31=$(printf '%s' "$OUT_C31" | jq -r '.hookSpecificOutput.additionalContext')
+assert_contains "C31: blocks with STORAGE FORMAT OUTDATED" "$CTXTXT_C31" "STORAGE FORMAT OUTDATED"
+assert_contains "C31: names the store's own major (v2)" "$CTXTXT_C31" "store v2"
+assert_contains "C31: names the skill's own major (v4)" "$CTXTXT_C31" "skill v4"
+assert_contains "C31: still tells the user to run /bro migrate" "$CTXTXT_C31" "run /bro migrate"
+assert_not_contains "C31: no read-order/journal-format text leaks through a block" "$CTXTXT_C31" "bro-append.sh"
+VER_C31=$(cat "$ROOT/.version")
+assert_eq "C31: .version is untouched by the block itself" "$VER_C31" "2"
