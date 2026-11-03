@@ -1,173 +1,106 @@
-# bro — your chat holds the thread
+# bro - your chat holds the thread
 
-[![Version](https://img.shields.io/badge/version-4.0.0-blue)](https://github.com/balaka/bro)
-[![GitHub stars](https://img.shields.io/github/stars/balaka/bro?style=social)](https://github.com/balaka/bro/stargazers)
+[![Version](https://img.shields.io/badge/version-5.0.0-blue)](https://github.com/balaka/bro)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-D97757)](https://claude.ai/download)
 
-**Enforced session journal for Claude Code / Claude Desktop.** Captures what `/compact` wipes — your preferences, vocabulary, decisions, rejected options, debugging hypotheses, the rules you taught Claude. v3 stores everything in **one central place** and keeps itself alive with **hooks**: the journal is read into every session automatically, a turn can't end while today's entry is stale, and retired storage paths are write-protected. No more "remember to run /bro".
+**Session continuity for Claude Code.** A chat forgets everything when it ends or gets compacted. bro makes the next chat start already knowing your rules, your decisions, who promised what, how you are doing and which words mean something special in the project.
 
-## Install (60 seconds)
+## What you get
+
+While you work, the chat jots a short note into today's journal and marks the lines worth keeping: `TASK: Dana - send the July test results`, `DECISION: keep weekly reports (supersedes d-a1b2c3)`, `RULE: answer short`. After every answer a small script files each marked line into a log, one line per record. No model is involved in filing.
+
+When a new chat starts (or is resumed, compacted or cleared), hooks print those logs back into it: one block per kind, newest first, plus a clock block with the real date and time and the exact command for writing the journal. Tasks you keep mentioning stay alive; tasks nobody touches for 30 days move to an archive. Nothing is ever deleted.
+
+Kinds are not built in. They are rows in one table, `~/bro/kinds.md`: add a row and you have a new kind with its own marker, log, lifetime and start-up block.
+
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/balaka/bro/main/scripts/bro-install.sh | bash
 ```
 
-Open a new session inside a git repository and just work — bro recognizes it and connects itself once you've had a few exchanges there (a handful of responses, configurable; see **Setup** in [SKILL.md](./SKILL.md)). Not a git repository, or want it connected right now under a name of your choosing? Type `/bro setup`. Done either way — from then on the hooks do the remembering.
+or clone and run it:
 
-Upgrading from v1/v2? Same command, then `/bro migrate` when the session-start hook flags your old logs. See [MIGRATION.md](./MIGRATION.md) — nothing is ever deleted.
+```bash
+git clone https://github.com/balaka/bro && ./bro/scripts/bro-install.sh
+```
 
-Already on a v3 store? Same command again (or `/bro update`), then `/bro migrate` once — `--dry-run` first, then for real on your go-ahead. It translates your registers' service words to English; skip it and bro keeps working exactly as it does now, just with a one-line reminder at the start of each chat until you run it.
+The installer copies the scripts to `~/.claude/bro/bin/`, the `/bro` skill to `~/.claude/skills/bro/`, writes `~/bro/kinds.md` if you have none and registers the hooks in `~/.claude/settings.json` (it saves a backup first and leaves other people's hooks alone). Reopen your chats afterwards: hooks are read at session start.
 
-Already on 4? Same command (or `/bro update`) is the whole upgrade — no migration inside one major version, ever. Reopen the chats that were open during the update.
+Then create a folder for your project in the store: `mkdir -p ~/bro/<project>` (the name is the git root folder name in lowercase, or an entry in the `workspaces` map of `~/.claude/bro-config.json`). In a chat, `/bro setup` does this for you.
 
----
+**Requirements:** macOS or Linux, bash 3.2 or newer, `jq`, `git` (for workspace names and curl-pipe install).
 
-## What's new in 4.0
+## Using it
 
-**bro gives Claude Code a memory:** what you decided, what's still open and how you're doing carry over to the next chat on their own.
+| command | what it does |
+|---|---|
+| `/bro` | capture now: write a section into today's journal |
+| `/bro status` | live records per kind, misses, last expire date |
+| `/bro setup` | run the installer, create the workspace folder |
+| `/bro migrate` | move a v4 store to v5 (dry run first) |
 
-1. You can now use bro in English: markers, files and docs are all in English, and notes written in Russian keep working.
-2. A new chat now opens already knowing how you are — tired, rushed, in the flow — and what you came up with last time, because bro saves your state and your ideas, not just your decisions.
-3. A new chat now always opens with its memory, because start-up takes a fraction of a second instead of silently timing out on large projects.
-4. Everything you write down now reaches the next chat, because bro reads notes the way people actually write them and updates its lists after every answer.
-5. You no longer set up projects by hand: bro connects one on its own once real work starts in a new repository, and leaves chats where you just browse code alone.
-6. Your to-do list stays readable, because bro won't accept several tasks packed into one line.
-7. Upgrading takes one command — `/bro migrate` converts your existing files and backs them up first.
+Writing is always done with one command (the clock block prints it with your project filled in):
 
-### Upgrading from 3.x
+```bash
+printf '%s\n' 'body' | ~/.claude/bro/bin/bro-append.sh --workspace <ws> --thread '<thread>' --topic '<topic>'
+```
 
-Re-run the installer, then run `/bro migrate` once — `--dry-run` first to see the plan, then for real on your go-ahead. It translates your registers' service words to English (never your own decisions, open items, terms, insights or principles), backing up every file it touches first. Skipping it costs nothing structural — a v3 store keeps working exactly as it does now — but every chat opens with a one-line reminder until you run it.
+Close a record with `DONE t-b58d76: what closed it`, replace one with `(supersedes d-a1b2c3)` at the end of the line, keep one alive by mentioning its id in any line. The full writing guide is in [SKILL.md](./SKILL.md).
 
----
+## Kinds
 
-## Why v3 exists
+`~/bro/kinds.md` ships with these rows. A global kind lives in `~/bro/`, a local one in `~/bro/<project>/`.
 
-v2 had two structural failures, reported by real daily use:
+| kind | scope | marker | prefix | file | lives | counts |
+|---|---|---|---|---|---|---|
+| rule | global | RULE: | r | rules | forever | your instruction on how to work; one line; revoked only by your word |
+| decision | local | DECISION: | d | decisions | 90d | a choice between options, what was chosen and why; superseded by a newer decision |
+| task | local | TASK: | t | tasks | 30d | a promise or an assignment with a doer; "waiting for a reply" or "question open" is NOT a task |
+| state | global | STATE: | s | state | last | the operator's mood, energy, work mode; the newest replaces the previous |
+| term | local | TERM: | g | glossary | forever | a word with its own meaning in this workspace |
+| insight | local | INSIGHT: | i | insights | 180d | a pattern or idea worth not losing; bold the conclusion |
 
-1. **A folder per chat.** Parallel chats didn't know about each other; per-chat summaries went stale; principles accumulated in per-repo copies that drifted apart. After a few months: 16 storage folders across the disk, 14 of them dead, and no way to answer "where is my stuff?"
-2. **Discipline instead of enforcement.** bro worked only while the model remembered to call it. Models forget — reliably. A rule without an enforcer is a wish.
+`lives`: `forever` leaves only by your word; `90d` is archived 90 days after the last touch; `last` keeps only the newest record. The id of a record is the prefix plus 6 hex digits (`t-b58d76`). After adding a row, re-run the installer so each kind gets its start-up hook.
 
-v3 answers both:
-
-- **One store.** `~/bro/` — global principles (one copy), one folder per project, one `INDEX.md` registry over everything. The unit is **project + day**, not chat: every chat of the day writes sections into the same daily file. Nothing to synchronize.
-- **Hooks as enforcers.** The harness — not the model's memory — injects the read-order at session start, blocks the end of a turn while today's journal is stale, and denies writes to legacy paths so an old chat can't clobber the migrated store.
-
-## Layout
+## What lives in ~/bro
 
 ```
 ~/bro/
-  INDEX.md            registry: one line per workspace — files, last entry
-  _principles.md      global principles (working discipline, privacy, people) — the only copy
-  _state.md           operator-state snapshot — ONE for the whole store, newest wins
-  _rule-candidates.md   RULE: markers queue — enters principles only on operator confirmation
-  cowork/
-    _workspace.md     what this is + people (thin)
-    decisions.md      decision register — harvested from DECIDED: markers, ADR-style chains
-    open.md           open-items register — harvested from OPEN: markers, closed by a CLOSED: marker, never by hand
-    vocab.md          vocabulary register — harvested from TERM: markers
-    insights.md       insight register — harvested from INSIGHT: markers, last 10 shown every session
-    2026-09-06.md     daily journal — all chats of the day, in anchored sections
-    _legacy-v2/       preserved v2 thread summaries
-  _archive/           migrated v1/v2 storages, byte-for-byte
+  kinds.md                      the table above
+  rules.log   rules.archive     global kinds: rules, state
+  state.log   state.archive
+  .expire-stamp                 date of the last expire run
+  <project>/
+    2026-11-03.md               one journal per day, all chats append to it
+    tasks.log   tasks.archive   one pair per local kind
+    decisions.log  glossary.log  insights.log  (+ .archive)
+    misses.log                  DONE / supersedes that named an id not found
+  _archive/v4-<date>/           full copy of a v4 store, made by migrate
 ```
 
-Journal entries use eight typed markers. The canonical spelling is always English — `DECIDED:` / `REJECTED:` / `RULE:` / `OPEN:` / `TERM:` / `CLOSED:` / `STATE:` / `INSIGHT:` — and every one also accepts a Russian alias on read (table below); a store that's never translated keeps working exactly as before, and every record this skill writes is English regardless of which language the operator typed in. A near-miss that still doesn't parse (wrong grammatical form, lowercase, a dash instead of a colon) is never silently dropped: it's counted and logged once per pass to `~/.claude/bro/health.log`. Markers are seeds: the **harvest script** (run by the session-start hook, and — since 3.8 — again in the background after every answer) moves them into the registers with stable ids — an open item written once cannot be lost, it sits in `open.md` until closed with its own `CLOSED:` marker (never a hand-edit — see **Appending** below). `STATE:` is the one exception to "into a register": it replaces a single store-wide snapshot instead of accumulating — see **Operator state and insights** below. Operator-confirmed rules move up to `_principles.md`; nothing enters principles without the operator's word. Operator's verbatim words are never translated or trimmed. `INDEX.md` is generated by harvest — a view, never hand-edited. The journal itself is only ever appended to through `bro-append.sh` — see **Appending** below.
+A log line reads `id | created | touched | status | text | source`. The log holds only `open` lines, so `wc -l tasks.log` is your live task count.
 
-### Russian aliases
+## Upgrading from v4
 
-| Marker | Canonical (English) | Russian alias | Old, read-only |
-|---|---|---|---|
-| Decision | `DECIDED:` | `РЕШЕНИЕ:` / `Решение:` | — |
-| Rejection | `REJECTED:` | `ОТКАЗ:` / `Отказ:` | — |
-| Rule | `RULE:` | `ПРАВИЛО:` / `Правило:` | — |
-| Open item | `OPEN:` | `ДЕЛО:` (ALL CAPS only) | `TAIL:`, `ХВОСТ:`, `Хвост:` |
-| Term | `TERM:` | `ТЕРМИН:` / `Термин:` | — |
-| Closed | `CLOSED <id>:` | `ЗАКРЫТ <id>:` / `Закрыт <id>:` | — |
-| State | `STATE:` | `СОСТОЯНИЕ:` (ALL CAPS only) | — |
-| Insight | `INSIGHT:` | `ИНСАЙТ:` (ALL CAPS only) | — |
-
-The six original markers — `DECIDED`, `REJECTED`, `RULE`, `TAIL`, `TERM`, `CLOSED` — accept their Russian alias ALL CAPS or Capitalized. `OPEN:`, `STATE:` and `INSIGHT:` accept theirs ALL CAPS only — a Capitalized writing (`Дело:`, `Состояние:`, `Инсайт:`) is ordinary Russian prose, not a marker, so a real-journal check found it would silently overwrite real data if accepted; it's read as prose instead. This is about the label alone — capitalize only `STATE:`/`INSIGHT:`/`OPEN:` (or `ДЕЛО:`) itself, never the sentence that follows it.
-
-Separately: `OPEN:`'s old English spelling, `TAIL:`, and its old Russian spellings still read exactly as before — the same dual-case register `TAIL` always had, as one of the six original markers above — and an open item's id keeps its `t-xxxxxx` prefix regardless of which spelling wrote it. Every string bro writes into a register is now English (`— from: <source>`, `— closed <date>: <text>`); an untranslated pre-4.0 register using the old Russian service words is read exactly the same — see **Translating an existing store to English**, below.
-
-## Appending — `bro-append.sh` (the sole write path)
-
-A daily journal is shared by every chat in a workspace, so as of v3.7 no chat Writes/Edits it directly any more — `bro-append.sh` is the only way in: it stamps `HH:MM`/date from the real clock (an invented section time can't be typed, there's no time argument), rejects a malformed body before a byte is written, auto-inserts the blank line after a marker so nothing glues to the next paragraph, appends under a lock, and logs the line range + a sha256 of it to `<ws>/.append-log` so the stop hook's lint can trust it later. Since 3.8 it also rejects an `OPEN:` line that packs several items (two or more `; `-separated clauses, a numbered list, or over ~400 characters) before writing anything — one open item per line, split the rest into their own `OPEN:` lines. The write guard (below) denies a direct Write/Edit, or a Bash command whose write TARGET resolves to the journal, and points here instead.
-
-## Operator state and insights
-
-Two new markers capture what used to fall through the cracks between sessions:
-
-- **`STATE:`** — capitalize only the label itself, never the text after it. How the operator is doing and what mode the work is in right now (tired, irritated, energized, what length of answer they'll tolerate). One side of the snapshot per line; every `STATE:` line in one journal section is a side of the SAME snapshot. Kept store-wide in `~/bro/_state.md` — one file, not per workspace — and only the newest snapshot survives (by when it was written, never by read order, so re-harvesting old journals can't regress it). Shown first in every session's opening text, even before a workspace has resolved (it belongs to the whole store, not one project), tagged with its age in hours.
-- **`INSIGHT:`** — a pattern, idea or new approach worth not losing: bold the conclusion, then 1–4 sentences, one line. Accumulates in `<ws>/insights.md` like `vocab.md`; the last 10 for the workspace, by their own birth date (not file position — harvest only ever appends, so a `--full` re-read can't quietly turn an old insight into the "newest" one), open every session, the rest are found by search.
-
-## The hooks
-
-| Hook | Event | What it guarantees |
-|---|---|---|
-| `bro-session-start.sh` | SessionStart (startup / resume / compact / clear) | Read-order injected into every session, leading with the operator-state snapshot (even before a workspace resolves) and ending with the last 10 insights (by birth date). Storage-version check, two tiers: older than v3 blocks (`STORAGE FORMAT OUTDATED`, demands `/bro migrate` before any bro entry is written); a v3 store under a v4 skill is NOT blocked — the ordinary full context still injects, just with one advisory line prepended (verbatim: "bro: this store is in v3 format — its registers still hold service words in Russian. Run /bro migrate once, with the store owner's consent, to translate them (a backup is made automatically); until then, everything works exactly as before."); matching versions stay silent. Since 3.8: recognizes an unconnected git repository (worktrees, submodules and linked copies collapsed to the one real project; exclusions apply — `$HOME`, `~/Desktop`, `~/Downloads`, inside the store itself) but does not create the workspace — it hints how many responses until it self-connects (see the turnstile row below); outside a git repository, or when the repo's name can't be slugged, hints `/bro setup` instead. Every `git` call is capped at ~2s. Does nothing slow, so it cannot time out |
-| `bro-harvest-hook.sh` | SessionStart, and (since 3.8) Stop — both async | Markers harvested into the registers in the background, only what is new since the last pass — now also after every answer, not just at session start. Only a store older than v3 is skipped (migrated first, never harvested into); a v3 store under a v4 skill harvests exactly like a v4 one. A per-workspace, non-blocking lock skips a trigger outright if that workspace's harvest is already running, instead of queueing behind it |
-| `bro-precompact.sh` | PreCompact | Marks the session as "start owed" before every compaction, so the watchdog checks the re-injection instead of assuming it |
-| `bro-stop-turnstile.sh` | Stop (shares its group with `bro-harvest-hook.sh` above) | Since 3.8, also the other half of self-create: counts a pending chat's own responses (deduped by prompt) against `autoCreateAfterAnswers`; silent below threshold. At it, checking whether the folder is still missing and creating it happen together under one lock keyed to that project's path — if two chats cross the threshold together, only the one that actually finds it missing and creates it is blocked to start the chronicle; the other finds it already there and falls through to the ordinary flow. Otherwise: a turn can't end while today's journal is missing or stale (default 30 min; configurable), or fails lint outside anything `bro-append.sh` already validated (a hand-edit or pre-3.7 content still gets full scrutiny — the trust is hash-gated, not session-based). Blocks at most once per prompt — can't loop. Watchdog: a session start that never finished is recovered here and reported, never silent |
-| `bro-write-guard.sh` | PreToolUse (Write\|Edit\|Bash) | Writes to retired v2 paths denied, redirected to the central store; a direct Write/Edit, or a Bash command whose write TARGET resolves to a shared daily journal (redirect — spaced or glued to either side of the operator — `tee`, `sed`/`perl -i`, `cp`/`install`/`ln`, `dd of=`, `truncate`, `rm`/`unlink`, `mv` checking both source and destination, or a python/node write call, including — since 4.0 — a bare relative journal-shaped filename when cwd already resolves inside the store), is denied too, redirected to `bro-append.sh`. Since 3.8 it scans for the write target rather than the journal's path merely appearing in the command text: a quoted heredoc body is dropped outright; an unquoted one is buffered whole and, if `$(` or a backtick appears anywhere in it, the WHOLE body is scanned as command text — the same treatment every heredoc got before this fix; with neither, it's dropped entirely. A heredoc fed to a nested interpreter is never dropped either way, since it genuinely executes. Recognizes `$HOME/…`/`${HOME}/…` alongside `~/…`, and resolves a relative target against the command's own `cd`/`pushd` history, including inside a `( cd DIR; … )` subshell; once a `cd` argument is a variable or `cd -`, the directory becomes unknowable for the rest of the command, and a relative target is then blocked only if its own name is already journal-shaped (`YYYY-MM-DD*.md`). Known gaps, honestly: a target's own path built from a shell variable or earlier substitution, a `cp`/`sed -i` destination expressed via a flag placed after the path, and an `eval` whose write call or its own target sits in a variable, all go unseen — a narrow, best-effort nudge, not the safety net (the stop hook's hash-gated lint is) |
-
-Config: `~/.claude/bro-config.json` — `root` (store location), `staleMinutes` (turnstile threshold), `autoCreateAfterAnswers` (responses before a recognized git repo becomes a workspace, default 5), `workspaces` (path→name overrides).
-
-## Commands
-
-- `/bro` — capture now (classify since last entry: journal / workspace summary / principles-candidate)
-- `/bro status` — freshness table for all workspaces, hook state, conflicts
-- `/bro setup` — enable bro for the current project
-- `/bro off` / `/bro on` — switch bro off/on for the current chat only (project stays enabled; the write guard stays on)
-- `/bro harvest` — manual harvest over all workspaces (the session-start hook harvests the current one automatically)
-- `/bro migrate` — deterministic migration of v1/v2 storages ([MIGRATION.md](./MIGRATION.md))
-- `/bro update` — pull latest + reinstall (idempotent)
-
-## Migration guarantees (v1/v2 → v3)
-
-Migration is a **script** (`scripts/bro-migrate.sh`), not model improvisation — same input, same output, any machine:
-
-- tar.gz backup first; originals archived wholesale to `~/bro/_archive/`; pointer file left behind
-- daily logs byte-for-byte; same-date threads merged under explicit `## (thread: …)` headers
-- v2 thread summaries kept verbatim; principles concatenated with provenance
-- duplicate headings listed in `CONFLICTS.md` for a human to resolve — the script never decides which rule wins
-- idempotent; `--dry-run` prints the plan and changes nothing
-
-## Translating an existing store to English
-
-Every string bro writes into a register from 4.0 on is English. An existing store doesn't need anything done to it — the old Russian service words (register headers, the origin/closed signature, `_state.md`'s header and field labels) keep being read exactly as before, forever. `/bro migrate` already runs this translation once as part of moving a v3 store to 4 (see **Upgrading from 3.x**, above, and [MIGRATION.md](./MIGRATION.md)). `scripts/bro-translate-registers.sh` — installed automatically alongside the other scripts — runs the same translation directly instead: on its own, against one workspace, or again later over a workspace the store-wide migrate pass never saw:
+Run the installer (it removes the v4 hooks and prints `v4 store found`), then:
 
 ```bash
-scripts/bro-translate-registers.sh --all --dry-run   # prints per-file replacement counts, writes nothing
-scripts/bro-translate-registers.sh --all              # then run it for real
+~/.claude/bro/bin/bro-migrate.sh --dry-run   # plan and counts, writes nothing
+~/.claude/bro/bin/bro-migrate.sh             # for real
 ```
 
-`--workspace <name>` instead of `--all` translates one project's own four registers (`decisions.md`, `open.md`, `vocab.md`, `insights.md`) only; the two store-wide files, `_rule-candidates.md` and `_state.md`, are translated only under `--all`, once for the whole store, since neither belongs to a single project. It rewrites service words only, each anchored to its own structural position so an entry that quotes the old format as an example, or an operator-state snapshot's own side text, is never touched: in `decisions.md`, only its own attribution line, the one that STARTS with `— родилось: `; in the other three registers, only the LAST signature on a line (`— родился: `, and — `open.md` only — `— закрыт <date>: `); in `_rule-candidates.md`, also the trailing `— принят `/`— отклонён ` notes (last on the line) and, separately, the hand-edited `[x] принят `/`[-] отклонён ` checkbox forms (only at the very start of a line); in `_state.md`, only line 1 (the title, trailing whitespace tolerated) and line 4 (`записано: … · проект …`) — never the operator's own snapshot sides from line 5 on. Each register's own header block is replaced whole, byte-for-byte the same text a brand-new register gets; an unrecognized line 1 prints a `NOTE` and is left as-is, and an existing-but-empty file is reported `empty — skipped`. Every file it's about to change is copied first to `_archive/pre-english-<timestamp>/<path from the store root>` — one timestamp for the whole run; and it's idempotent — a file with nothing left to translate is left untouched, and running it again over an already-translated store reports everything as already English and changes nothing. It never touches daily journals, `_principles.md`, `_workspace.md`, or `INDEX.md` (harvest regenerates that anyway), or anything already in `_archive/`. Run `--dry-run` first, read the per-file counts it prints, and get the storage owner's go-ahead before running it for real — it rewrites files across every project in the store.
+Before touching anything, a full copy of the store goes to `~/bro/_archive/v4-<date>/`. Old markers in journals are rewritten to the English ones, the old registers become logs with their ids kept, and old tasks land in the archive at once. Nothing is deleted. It refuses to run twice.
 
-## Changelog
+## Tests
 
-- **4.0.0** — major version, not a point release: every user now sees a different bro. The whole repository speaks English — marker names, everything harvest writes into the operator's own store, and this documentation — and the release ships together with a way to translate an existing store to match. The open-item marker is renamed `OPEN:` (was `TAIL:`); its new Russian alias is `ДЕЛО:`, ALL CAPS only, same discipline as `STATE:`/`INSIGHT:`; the old `TAIL:`/`ХВОСТ:`/`Хвост:` spellings still work — `marker_type()` folds all five to the one canonical `OPEN`, and the `t-xxxxxx` id prefix is unchanged, so every existing id and `CLOSED` reference stays valid. Every string harvest newly appends to a register is English: the origin signature is now `— from: <source>` (was `— родилось:`/`— родился:`), a closed item gets `— closed <date>: <text>` (was `— закрыт <date>:`), and every register's own header, `_state.md`'s header and field labels, and `INDEX.md` (including its `open items` column, was `open tails`) are English top to bottom. Reading stays bilingual on purpose: the 3.8.1 duplicate-detector and `CLOSED`'s own line-finder still recognize the pre-4.0 Russian forms, and `_principles.md`'s review-date scan reads its three relevant fields — `Rule`/`Origin`/`Review`, shown in English in this documentation — under either that name or the existing Russian one (`Правило`/`Родилось`/`Пересмотр`); a principle's other three fields (`Category`/`Enforcement`/`Bounds`) are free text no script parses either way. A build-time review round tightened three more things: an English keyword now allows only an id or a parenthetical note before its colon, not any word, so `OPEN ISSUES:`/`OPEN QUESTIONS:` read as prose rather than false marker hits (Russian aliases are unaffected — any single word still counts, as before); the write guard also now catches the redirect operator glued to the word before it (`'x'>>file`) and a python/node one-liner naming a bare relative journal filename when its own cwd is already inside the store; and the register converter anchors every replacement to its own structural position, so an entry's own quoted example of the old format, and an operator-state snapshot's own side text, are never touched (also available standalone via `scripts/bro-translate-registers.sh`). Background harvest no longer skips a v3 store now that the skill itself is v4 — that fix landed before this ever shipped, so registers keep filling in normally whether or not a store is migrated. Moving a store from 3 to 4 is one pass: `/bro migrate` — `--dry-run` first, then for real on the operator's go-ahead — calls that same `bro-translate-registers.sh --all` itself and, only once it finishes clean, stamps the store `4`; a failed run leaves it at `3` so a later `/bro migrate` resumes rather than silently succeeding. Skipping it costs nothing structural: an unmigrated v3 store keeps working exactly as before, with one reminder line at the start of each chat until `/bro migrate` is run. See MIGRATION.md's **Updating from 3.x to 4.0**.
-- **3.8.1** — fixes a duplicate a real 3.8.0 full re-harvest produced: when two different decisions (or rejections, open items, rule candidates) had genuinely been given the *same* explicit id by the operator, the second was already stored under a collision suffix hashed from its body — and pre-3.7 harvest, before the glue fix, hashed a body that had the next paragraph stuck to it. Re-reading the identical journal line today hashes the shorter, un-glued body differently, finds no match, and writes it a second time. Harvest now checks, before minting that suffix, whether an existing record under the same base id and the same journal source has a body that is a plain prefix of the new one (either direction) — same marker, re-hashed, not a new one — and reuses it instead, logging `= already present as <id>`. Two genuinely different decisions sharing one id still both land, as before. Anyone who already ran a full re-harvest on 3.8.0 over registers collected before 3.7 may have such a pair sitting in a register now; see MIGRATION.md.
-- **3.8.0** — two markers for what used to have nowhere to go, and harvest that keeps up with the chat. `STATE:` captures how the operator is doing and what mode the work is in — one side of a single snapshot per line, kept store-wide in `~/bro/_state.md` (newest wins, never regresses on a re-read of old journals), shown first in every session's opening text with its age in hours; the nerve-era "Operator state" section was in 13 of 16 files and had quietly vanished by v3. `INSIGHT:` captures a pattern or idea worth not losing — bolded conclusion, 1–4 sentences, one line — accumulating in `<ws>/insights.md`, last 10 shown every session; before this, such an idea had nowhere to land but a `RULE:` (the operator's ProductOS marketplace idea was stuck inside rule candidate r-fe98c8). Both new keywords deliberately accept ALL CAPS only, unlike the original six markers (which now also accept a Capitalized Russian writing, closing a real gap: a chronicle line using that writing went unrecognized because only ALL CAPS ever counted) — a real-journal measurement found the Capitalized Russian writing is mostly an old habit of captioning test/branch/build status or an unrelated idea, not the operator's own state, so accepting that writing would let an ordinary caption silently overwrite a real snapshot; near-misses that still don't parse are counted and logged once per pass to `~/.claude/bro/health.log`, never blocked. Harvest now also runs in the background after every answer (a second `bro-harvest-hook.sh` registration under Stop, alongside the existing SessionStart one), not only at session start, so registers stop lagging a whole chat behind; a per-workspace lock keeps concurrent triggers from queueing or racing each other. A git repository bro has never seen recognizes itself the moment a session opens there (worktrees, submodules and linked copies collapse to the one real project they belong to; `$HOME`, `~/Desktop`, `~/Downloads` and anywhere inside the store excluded; every `git` call capped at ~2s) — but, after a sandbox run found this would have self-created 16 throwaway projects on the real disk (isolated background-task worktrees, other people's repos), it deliberately does NOT create the workspace on the spot: a hint names the project and how many responses (`autoCreateAfterAnswers`, default 5) until it connects itself, the stop hook counts this chat's own responses, and only once real work has actually happened does it create the workspace for real and immediately require starting its chronicle that same turn. Manual `/bro setup` is now needed only outside a git repository, for a repo name with no Latin letters or digits to slug, or to connect immediately / under a different name instead of waiting; if two chats reach the same unconnected repo's threshold together, checking and creating the folder happen under one lock, so only the chat that actually creates it is required to start the chronicle. The write guard now checks where a Bash command actually writes rather than whether the journal's path merely appears in its text, closing the false positive that denied creating `~/bro/bro/anatomy.md` because its own heredoc body quoted a journal filename as a worked example; a quoted heredoc body is dropped outright, and an unquoted one is buffered whole and dropped too — UNLESS `$(` or a backtick appears anywhere in it, in which case the whole body is scanned as command text instead (the same treatment every heredoc got before this fix, since a live substitution can open on one line and close on a later one and still runs for real regardless of quoting); a heredoc fed to a nested interpreter (`bash`, `python`, …) is never dropped, since its whole body genuinely executes. It also now recognizes the literal `$HOME/…`/`${HOME}/…` spellings alongside `~/…`, an operator glued straight onto its target (`>>file`), a relative target resolved against the command's own `cd`/`pushd` history — including inside a `( cd DIR; … )` subshell, and, once a `cd` argument is a variable or `cd -` makes the directory unknowable, a relative target is blocked only if its own name already looks like a journal — and `mv`'s source as well as its destination (moving the journal away is a write too) — known gaps that are still real, not silently assumed away: an operator glued to the word BEFORE it too, a target's own path built from a shell variable or an earlier substitution, and a `cp`/`sed -i` destination expressed via a flag placed after the path. A `TAIL:` line carrying several items (2+ TOP-LEVEL `; `-separated clauses — one inside parentheses or «quotes»/"quotes" doesn't count — a REAL numbered list with both item 1 and item 2 actually present, or over 400 characters under an explicitly forced UTF-8 locale) is now rejected before a byte is written — the plan behind this: cowork's `open.md` had grown to 315 records partly because one `TAIL:` line was doing the work of four to six. Also fixed during review: harvest now copies a journal under the same lock `bro-append.sh` uses before parsing it, since running after every answer made reading the live file race a mid-write append often enough to matter, and leaves an unterminated last line for the next pass instead of guessing at it; a journal filename with a topic suffix (`2026-04-22-offerings-banner.md`) is recognized, where before it was invisible to harvest, silently, forever; a bolded conclusion inside an `INSIGHT:` body survives harvest instead of losing its `**`. Upgrade = re-run the installer; nothing to migrate (see MIGRATION.md) — reopen chats afterward, since hooks are only read at session start.
-- **3.7.0** — open items get a real close, the journal gets a real write path. Two structural gaps closed: (1) closing a `TAIL:` item meant hand-editing `open.md` directly — the one register mutation in the codebase with no lock and no script; a sixth marker, `CLOSED:`, closes an open item through harvest instead (names the item's own id; a bad or missing one is a CLOSE-MISS, logged and surfaced every session, never silently dropped). (2) every parallel chat wrote its own section into the shared daily journal with raw Write/Edit — one chat's malformed header or invented (non-clock) timestamp blocked every other chat's turn until fixed by hand; `bro-append.sh` is now the only way to add a section (stamps `HH:MM`/date from the real clock — no time argument exists, so an invented time can't be typed; validates the body before a byte is written; appends atomically under a lock; logs what it wrote for the stop hook to trust later). The write guard denies a direct Write/Edit or an obvious Bash redirect/`tee`/`sed -i` into the journal and points to the script instead; the stop hook's format lint is now hash-gated — a range `bro-append.sh` already validated is skipped, a hand-edit or pre-3.7 content still gets full scrutiny. Also fixed: a marker's harvested body used to swallow the next paragraph when the writer forgot a blank line — harvest now takes only the marker's own physical line (ids are computed the same way as before, so nothing already harvested is duplicated on a `--full` re-read of an unedited journal; editing text that used to glue onto an already-harvested marker can still file a second record under a new id — a known limitation, documented in `bro-harvest.sh`'s own header, not fixed in this release). New shared `scripts/bro-lib.sh` (`lock()`/`unlock()`, `hash_range()`, the one canonical marker regex) replaces three drifting copies with one. Upgrade = re-run the installer; a chat already open when it runs keeps writing the journal directly with Edit/Write until it's reopened, at which point the guard redirects it to `bro-append.sh`. Not in this release: the backlog watchdog that nudges a bulk open-item cleanup, the rule-review queue becoming a real block, the read-tracker, the completeness check — staged for a later release.
-- **3.6.0** — session start can no longer die silently. Harvest used to run inside the session-start hook, before the context was emitted; once a workspace grew past two weeks of busy journals (30 s of harvest against a 10 s hook timeout) the harness cancelled the hook and discarded its output — every new, resumed or compacted chat started without principles and read-order, registers stopped filling, and nothing said so. Now: the session-start hook only injects context (0.6 s on the same workspace); harvest runs as its own `async` hook and is incremental (only journals changed since the last completed pass, only the lines added since; `--full` re-reads everything); the stop hook watches the start hook (and a PreCompact hook re-arms that watch before every compaction) — a start that never finished is recovered at the end of the first turn, logged to `~/.claude/bro/health.log`, and the operator is told; the same stop hook checks that a harvest pass completed after the session started, and has the chat run it when the background hook is not there (chats opened before the update). Upgrade = re-run the installer (`/bro update`); no data migration; reopen chats that were open
-- **3.5.1** — /bro always re-reads the principles file, making it the manual «pull the latest rules now» button for any open chat
-- **3.5.0** — fifth marker `REJECTED:` (a discussion that turned something down with nothing chosen instead finally has a home — lands in decisions.md as [rejected]); capture completeness rules baked into the skill: outcomes always typed, proof lives inside the record, promises become open items the moment they are spoken, side work is logged like main work
-- **3.4.2** — harvest bugfixes from the capture audit: id collisions across parallel chats no longer silently swallow records (suffix + loud COLLISION log); suffixed keywords (e.g. `RULE-topic`, `TAIL-followup`) are recognized as their base markers
-- **3.4.1** — rule-review cadence enforced (queue >=10 or 7 days -> session-start demands a batched review); every turnstile block now carries NOW (date, time, weekday) so chats re-sync their clock each time they are nudged
-- **3.4.0** — input formats get enforcers: session context now carries the bro version and current date/time+weekday (chats stop guessing the hour and greeting good-night at noon); stop-hook lint checks section-header format, future timestamps and marker-like lines missing their colon; harvest reports principles with missing Rule/Origin/Review fields in a Format-warnings INDEX section; broken bro-config.json is announced instead of silently defaulting
-- **3.3.2** — stale locks (crash leftovers, >5 min) are reclaimed instead of silencing register appends and INDEX regeneration forever
-- **3.3.1** — INDEX generation no longer lists live lock directories as workspaces
-- **3.3.0** — hardening after adversarial audit (28 findings): upward-walk workspace resolution (subfolders no longer silently disable bro); registers included in the session read-order; journal/marker format taught by the hook itself; anchored harvest dedup (d-1 no longer hides inside d-10); relaxed marker grammar (bold/bulleted/indented, malformed ids recovered, multi-line bodies joined); per-register locks + atomic INDEX writes (concurrent sessions safe); review dates parsed by shape, not position; store version self-heals for organic installs; jq-less fallbacks in all hooks; write guard also protects bro-view mirrors; migrate survives paths with spaces and re-runs; installer checks git, copies atomically
-- **3.2.1** — principle review dates enforced: harvest writes a Reviews-due section into INDEX.md, the session-start hook reports due counts, /bro status runs the spaced-repetition review cycle
-- **3.2.0** — typed records: harvest script collects DECIDED/TAIL/TERM/RULE markers from journals into per-workspace registers (decisions.md, open.md, vocab.md) and a global rule-candidates queue; INDEX.md becomes a generated view with open-tail counts; anchored section headers
-- **3.1.0** — per-chat off switch: `/bro off` / `/bro on` (session-scoped; hooks check `~/.claude/bro/off/<session_id>`)
-- **3.0.0** — central store; project+day unit (thread folders retired); global principles; hook enforcement (session-start injection, stop turnstile, write guard, version check); deterministic script migration; skill rewritten to current Anthropic skill guidelines
-- **2.1.1** — removed hidden `.claude/bro/` storage option
-- **2.1.0** — chat-title tag resolution, UUID postfix, `/bro migrate`
-- **2.0.0** — three-tier layout, per-repo storage
+```bash
+tests/v5.sh
+```
+
+Self-contained: it runs on a throwaway HOME with a synthetic store and prints one `PASS:` or `FAIL:` line per check.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT, see [LICENSE](./LICENSE).
