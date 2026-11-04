@@ -1,6 +1,6 @@
 # bro - your chat holds the thread
 
-[![Version](https://img.shields.io/badge/version-5.0.0-blue)](https://github.com/balaka/bro)
+[![Version](https://img.shields.io/badge/version-5.1.0-blue)](https://github.com/balaka/bro)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude-Code-D97757)](https://claude.ai/download)
 

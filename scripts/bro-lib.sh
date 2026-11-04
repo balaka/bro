@@ -35,7 +35,8 @@ bro__default_kinds() {
   cat <<'KINDS'
 | kind | scope | marker | prefix | file | lives | counts |
 |---|---|---|---|---|---|---|
-| rule | global | RULE: | r | rules | forever | your instruction on how to work; one line; revoked only by your word |
+| principle | global | PRINCIPLE: | p | principles | forever | how to work with the operator everywhere; written ONLY when he says so explicitly ("это принцип", "во всех проектах") |
+| rule | local | RULE: | r | rules | forever | how to work in THIS workspace; one line; revoked only by his word |
 | decision | local | DECISION: | d | decisions | 90d | a choice between options, what was chosen and why; superseded by a newer decision |
 | task | local | TASK: | t | tasks | 30d | a promise or an assignment with a doer; "waiting for a reply" or "question open" is NOT a task |
 | state | global | STATE: | s | state | last | the operator's mood, energy, work mode; the newest replaces the previous |
@@ -93,6 +94,28 @@ bro_lock() {
   done
 }
 bro_unlock() { rmdir "$1.lock" 2>/dev/null; return 0; }
+
+# bro_days_ago <n> — date n days back (BSD and GNU date)
+bro_days_ago() { date -v-"$1"d +%F 2>/dev/null || date -d "$1 days ago" +%F; }
+
+# bro_similar <kind-log> <text> — id of the open record most like <text>, or nothing.
+# Words >= 4 letters (any script, lower-cased); Jaccard >= 0.5, or >= 0.3 with the same "doer:" prefix (<= 3 words).
+bro_similar() {
+  [ -s "$1" ] || return 0
+  perl -CSDA -Mutf8 -e '
+    sub words { my %w; $w{lc $_} = 1 for grep { length >= 4 } split /[^\p{L}]+/, $_[0]; \%w }
+    sub doer { $_[0] =~ /^([^:]*):/ && (() = $1 =~ /\S+/g) <= 3 ? lc($1 =~ s/^\s+|\s+$//gr) : "" }
+    my ($log, $text) = @ARGV; my $a = words($text); my $da = doer($text); my ($best, $bs) = ("", 0);
+    open my $f, "<:utf8", $log or exit; 
+    while (<$f>) {
+      chomp; my ($id, undef, undef, undef, $t) = split / \| /, $_, 5; next unless defined $t;
+      $t =~ s/ \| \S*\.md(#[0-9:]*)?$//; my $b = words($t);
+      my $i = grep { $b->{$_} } keys %$a; my $u = keys(%$a) + keys(%$b) - $i; next unless $u;
+      my $j = $i / $u; my $d = doer($t);
+      if (($j >= 0.5 || ($da ne "" && $da eq $d && $j >= 0.3)) && $j > $bs) { ($best, $bs) = ($id, $j) }
+    }
+    print "$best\n" if $best;' "$1" "$2"
+}
 
 bro_today() { date +%F; }
 bro_now()   { date +%H:%M; }

@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.1.0 - 2026-11-05
+
+**bro now warns you when you restate a task and flags the ones nobody touched.**
+
+- **Restated task warning.** Writing a `TASK:` or `DECISION:` that looks like one already open prints `looks like t-372640 — add (supersedes t-372640) …` and still writes the line. Nothing is ever blocked.
+- **Stale records are flagged.** A record untouched for more than `staleDays` (default 3, in `bro-config.json`) is printed with `· stale? touch or DONE`, and the clock block says `Stale tasks: N`.
+- **Plural names work.** `bro-context.sh tasks` and `glossary` work like `task` and `term`; an unknown name fails with a clear message.
+- **Principles vs rules.** A new global kind `principle` (`PRINCIPLE:`) holds how to work with you everywhere; `RULE:` is now per workspace. `bro-upgrade.sh` splits an existing store once (the installer runs it).
+- The clock prompt now carries a concrete example of a superseding line.
+
 ## 5.0.0 - 2026-11-03
 
 **Every new chat now starts with your rules, decisions, open tasks, state and glossary already in front of it, and with the real date and time.** Each kind of record arrives as its own block, newest first, so a long list of tasks can no longer push your rules out. A block that is too long is cut at a fixed size and tells you where to grep for the rest.

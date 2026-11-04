@@ -12,11 +12,11 @@ a_rejects() { ! a_append "$1"; }
 v5a_run() {
   . "$A_DIR/bro-lib.sh"
   mkdir -p "$HOME/bro/tws"
-  a_chk "bro_kinds prints 6 rows (default table)" test "$(bro_kinds | wc -l | tr -d ' ')" = 6
+  a_chk "bro_kinds prints 7 rows (default table)" test "$(bro_kinds | wc -l | tr -d ' ')" = 7
   a_chk "bro_kinds row has 7 tab fields" test "$(bro_kinds | head -1 | awk -F'\t' '{print NF}')" = 7
   a_chk "bro_kind_field task prefix = t" test "$(bro_kind_field task prefix)" = t
   a_chk "bro_log_path local" test "$(bro_log_path tws task)" = "$(bro_root)/tws/tasks.log"
-  a_chk "bro_log_path global" test "$(bro_log_path tws rule)" = "$(bro_root)/rules.log"
+  a_chk "bro_log_path global" test "$(bro_log_path tws principle)" = "$(bro_root)/principles.log"
   a_chk "bro_id stable" test "$(bro_id task 2026-11-03 x)" = "$(bro_id task 2026-11-03 x)"
   a_chk "bro_id shape" bash -c "[[ $(bro_id task 2026-11-03 x) =~ ^t-[0-9a-f]{6}$ ]]"
   a_chk "bro_session_context is valid JSON" bash -c ". '$A_DIR/bro-lib.sh'; bro_session_context hi | jq -e '.hookSpecificOutput.additionalContext==\"hi\"'"
@@ -29,6 +29,14 @@ v5a_run() {
   a_chk "unknown workspace folder not created" test ! -d "$HOME/bro/nope"
   a_chk "append rejects malformed DONE" a_rejects 'DONE nope: x'
   a_chk "append rejects empty body" a_rejects ''
+  printf 't-372640 | 2026-11-01 | 2026-11-01 | open | Юрий: buy the domain for the landing page | tws/2026-11-01.md#10:00\n' > "$HOME/bro/tws/tasks.log"
+  w=$(a_append 'TASK: Юрий: buy domain landing page now' 2>&1 >/dev/null)
+  a_chk "dup warning names the id" bash -c "echo '$w' | grep -q 'looks like t-372640 — add (supersedes t-372640)'"
+  w=$(a_append 'TASK: Юрий: buy domain landing page (supersedes t-372640)' 2>&1 >/dev/null)
+  a_chk "no warning with supersedes" test -z "$w"
+  w=$(a_append 'TASK: Dana: send the quarterly invoice' 2>&1 >/dev/null)
+  a_chk "no warning for unrelated text" test -z "$w"
+  a_chk "warned line is still written" grep -q 'buy domain landing page now' "$HOME"/bro/tws/*.md
   [ "$A_FAIL" = 0 ]
 }
 if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then

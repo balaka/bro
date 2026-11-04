@@ -187,10 +187,10 @@ else : > "$RULES_TMP"; fi
 SEEN_RULES=" "
 while IFS= read -r rl; do
   rl=$(printf '%s' "$rl" | tr '\t' ' '); [ -n "$rl" ] || continue
-  rid=$(bro_id rule "$TODAY" "$rl")
+  rid=$(bro_id principle "$TODAY" "$rl")
   case "$SEEN_RULES" in *" $rid "*) continue ;; esac
   SEEN_RULES="$SEEN_RULES$rid "
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "-" rule "$rid" "$TODAY" open "" "$rl" >> "$REC"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "-" principle "$rid" "$TODAY" open "" "$rl" >> "$REC"
 done < "$RULES_TMP"
 
 # touched: latest journal date that mentions each id (one pass over all journals)

@@ -102,9 +102,9 @@ v5d_run() {
   d_chk "insight migrated" d_has "$R/alpha/insights.log" "i-333333 | 2026-10-01 | 2026-10-01 | open | small steps work"
   d_chk "term migrated to glossary.log" d_has "$R/alpha/glossary.log" "v-444444 | 2026-10-01 | 2026-10-01 | open | foo — a made-up word"
   d_chk "second workspace migrated (log, or archive if expire ran)" bash -c "cat '$R'/beta/tasks.log '$R'/beta/tasks.archive 2>/dev/null | grep -q \"^t-eeeeee | 2026-10-02\""
-  d_chk "rules.log has 3 lines (one per draft rule)" test "$(wc -l < "$R/rules.log" | tr -d ' ')" = 3
+  d_chk "principles.log has 3 lines (one per draft rule)" test "$(wc -l < "$R/principles.log" | tr -d ' ')" = 3
   d_chk "state.log has 1 line, joined with '; '" bash -c "test \"\$(wc -l < '$R/state.log' | tr -d ' ')\" = 1 && grep -q '^s-[0-9a-f]\{6\} | 2026-10-15 | 2026-10-15 | open | tired but steady.; short sessions.' '$R/state.log'"
-  d_chk "every log line has >= 5 fields" bash -c "! awk -F' [|] ' 'NF<5{bad=1} END{exit !bad}' '$R'/alpha/*.log '$R'/alpha/*.archive '$R'/rules.log"
+  d_chk "every log line has >= 5 fields" bash -c "! awk -F' [|] ' 'NF<5{bad=1} END{exit !bad}' '$R'/alpha/*.log '$R'/alpha/*.archive '$R'/principles.log"
   d_chk "kinds.md written" test -s "$R/kinds.md"
 
   d_chk "backup folder exists" bash -c "ls -d '$R'/_archive/v4-*"

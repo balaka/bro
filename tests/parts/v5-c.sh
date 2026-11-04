@@ -24,7 +24,7 @@ v5c_run() {
   o=$(c_ctx task)
   c_chk "capped at contextChars" test "${#o}" -le 10000
   c_chk "ends with +N more" bash -c "echo '$o' | tail -1 | grep -Eq '^\(\+[0-9]+ more in .*tasks.log — grep them\)$'"
-  c_chk "global heading" bash -c "printf '{\"cwd\":\"$HOME/proj\"}' | bash '$C_DIR/bro-context.sh' rule | grep -q 'rules (global) — none'"
+  c_chk "global heading" bash -c "printf '{\"cwd\":\"$HOME/proj\"}' | bash '$C_DIR/bro-context.sh' principle | grep -q 'principles (global) — none'"
   c_chk "no workspace -> silent exit 0" bash -c "mkdir -p '$HOME/nows' && [ -z \"\$(printf '{\"cwd\":\"$HOME/nows\"}' | bash '$C_DIR/bro-context.sh' task)\" ]"
   echo "2020-01-01 | x | y" > "$HOME/bro/cw/misses.log"
   o=$(c_ctx clock)
@@ -32,6 +32,23 @@ v5c_run() {
   c_chk "clock has version/ws/append cmd" bash -c 'printf "%s\n" "$O" | grep -q "bro v5.0.0 · workspace cw" && printf "%s\n" "$O" | grep -q "bro-append.sh --workspace cw"'
   c_chk "clock lists markers from kinds.md" bash -c 'printf "%s\n" "$O" | grep -q "  TASK: — a promise" && printf "%s\n" "$O" | grep -q "  INSIGHT: — "'
   c_chk "clock has DONE, stale and misses lines" bash -c 'printf "%s\n" "$O" | grep -q "DONE <id>" && printf "%s\n" "$O" | grep -q "older than 30 min" && printf "%s\n" "$O" | grep -q "^Misses: 1"'
+  # staleness, plural kind names, unknown kind
+  local D5; D5=$(. "$C_DIR/bro-lib.sh"; bro_days_ago 5)
+  printf 't-dddddd | %s | %s | open | five days old\nt-eeeeee | 2026-10-01 | %s | open | touched today\n' "$D5" "$D5" "$(date +%F)" > "$L"
+  o=$(c_ctx tasks)
+  c_chk "plural 'tasks' works" bash -c "echo '$o' | head -1 | grep -qx '## bro · tasks (cw) — 2 live'"
+  c_chk "stale suffix on 5-day-old record" bash -c "echo '$o' | grep 'five days old' | grep -q ' · stale? touch or DONE$'"
+  c_chk "no stale suffix on today's record" bash -c "! echo '$o' | grep 'touched today' | grep -q stale"
+  c_chk "glossary maps to term" test "$(c_ctx glossary)" = "## bro · glossary (cw) — none"
+  export CK; CK=$(c_ctx clock)
+  c_chk "clock prints Stale tasks: 1" bash -c 'printf "%s\n" "$CK" | grep -qx "Stale tasks: 1 — touch or DONE them"'
+  c_chk "clock has example and restate hint" bash -c 'printf "%s\n" "$CK" | grep -q "Example: TASK: Юрий: buy the domain (supersedes t-372640)" && printf "%s\n" "$CK" | grep -q "Restating a task or decision?"'
+  c_chk "unknown kind exits 1 with message" bash -c "r=\$(printf '{\"cwd\":\"$HOME/proj\"}' | bash '$C_DIR/bro-context.sh' bogus 2>&1 >/dev/null); rc=\$?; [ \"\$r\" = '[bro-context] unknown kind: bogus' ]"
+  c_chk "unknown kind exit code 1" bash -c "printf '{}' | bash '$C_DIR/bro-context.sh' bogus 2>/dev/null; [ \$? = 1 ]"
+  jq '.staleDays=10' "$HOME/.claude/bro-config.json" > "$HOME/c.tmp" && mv "$HOME/c.tmp" "$HOME/.claude/bro-config.json"
+  export CK; CK="$(c_ctx task)$(c_ctx clock)"
+  c_chk "staleDays=10 respected" bash -c '! printf "%s" "$CK" | grep -q "stale"'
+  jq 'del(.staleDays)' "$HOME/.claude/bro-config.json" > "$HOME/c.tmp" && mv "$HOME/c.tmp" "$HOME/.claude/bro-config.json"
   # stop
   local J="$HOME/bro/cw/$(date +%F).md"
   c_chk "stop blocks when journal missing" bash -c "echo '$(c_stop '')' | jq -e '.decision==\"block\"'"
@@ -44,16 +61,16 @@ v5c_run() {
   local S="$HOME/.claude/settings.json"
   echo '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"/x/.claude/bro/bin/bro-stop-turnstile.sh"},{"type":"command","command":"/other/hook.sh"}]}],"PreToolUse":[{"hooks":[{"type":"command","command":"/h/.claude/bro/bin/bro-write-guard.sh"}]}]}}' > "$S"
   bash "$C_DIR/bro-install.sh" >/dev/null 2>&1
-  c_chk "install: 5 matchers x 7 commands" test "$(jq '[.hooks.SessionStart[]|select(.hooks|length==7)]|length' "$S")" = 5
+  c_chk "install: 5 matchers x 8 commands" test "$(jq '[.hooks.SessionStart[]|select(.hooks|length==8)]|length' "$S")" = 5
   c_chk "install: 1 bro Stop + foreign kept" test "$(jq '[.hooks.Stop[].hooks[].command]|length' "$S")" = 2
   c_chk "install: v4 hooks purged" bash -c "! jq -e '.hooks.PreToolUse' '$S'"
   c_chk "install: bro-stop registered" bash -c "jq -e '[.hooks.Stop[].hooks[]|select(.command|endswith(\"bro-stop.sh\"))]|length==1' '$S'"
-  c_chk "install: kinds.md and config" bash -c "test -f '$HOME/bro/kinds.md' && jq -e '.contextChars==10000 and (has(\"autoCreateAfterAnswers\")|not)' '$HOME/.claude/bro-config.json'"
+  c_chk "install: kinds.md and config" bash -c "test -f '$HOME/bro/kinds.md' && jq -e '.contextChars==10000 and .staleDays==3 and (has(\"autoCreateAfterAnswers\")|not)' '$HOME/.claude/bro-config.json'"
   cp "$S" "$S.before"; bash "$C_DIR/bro-install.sh" >/dev/null 2>&1
   c_chk "install idempotent" cmp -s "$S" "$S.before"
   echo '| note | local | NOTE: | n | notes | forever | a side note |' >> "$HOME/bro/kinds.md"
   bash "$C_DIR/bro-install.sh" >/dev/null 2>&1
-  c_chk "install: user-added kind gets a hook (8 per matcher)" test "$(jq '[.hooks.SessionStart[]|select(.hooks|length==8)]|length' "$S")" = 5
+  c_chk "install: user-added kind gets a hook (9 per matcher)" test "$(jq '[.hooks.SessionStart[]|select(.hooks|length==9)]|length' "$S")" = 5
   [ "$C_FAIL" = 0 ]
 }
 if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then

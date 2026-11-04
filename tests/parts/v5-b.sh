@@ -60,8 +60,8 @@ J
   b_chk "superseded old decision archived" grep -q "^$dA | 2026-10-01 | 2026-10-01 | superseded:$dB | use bash" "$R/ws/decisions.archive"
   b_eq "decisions.log live count" "$(wc -l < "$R/ws/decisions.log" | tr -d ' ')" 2
   b_chk "mid-line marker ignored" bash -c "! grep -rq 'not a marker' '$R'/ws/*.log"
-  b_chk "global rule in root rules.log" grep -q "| open | always answer in English | ws/2026-10-01.md#09:15$" "$R/rules.log"
-  b_chk "no local rules log" test ! -e "$R/ws/rules.log"
+  b_chk "rule in workspace rules.log" grep -q "| open | always answer in English | ws/2026-10-01.md#09:15$" "$R/ws/rules.log"
+  b_chk "no global rules log" test ! -e "$R/rules.log"
   b_eq "state lives=last: one live" "$(wc -l < "$R/state.log" | tr -d ' ')" 1
   b_chk "state newest is live (other ws)" grep -q "| calm | " "$R/state.log"
   b_eq "state older archived superseded" "$(grep -c 'superseded:s-' "$R/state.archive")" 2

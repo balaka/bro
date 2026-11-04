@@ -56,6 +56,16 @@ done <<EOT
 $BODY
 EOT
 
+# ---- duplicate warning (never blocks): a new TASK/DECISION that restates an open record
+while IFS= read -r LINE; do
+  case "$LINE" in "TASK: "*) K=task ;; "DECISION: "*) K=decision ;; *) continue ;; esac
+  case "$LINE" in *"(supersedes "*) continue ;; esac
+  SIM=$(bro_similar "$(bro_log_path "$WS" "$K")" "${LINE#*: }")
+  [ -n "$SIM" ] && echo "[bro-append] looks like $SIM — add (supersedes $SIM) to the line or write DONE $SIM: …" >&2
+done <<EOT
+$BODY
+EOT
+
 # ---- append under the journal lock
 ROOT=$(bro_root); DIR="$ROOT/$WS"; TODAY=$(bro_today); NOW=$(bro_now)
 FILE="$DIR/$TODAY.md"

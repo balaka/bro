@@ -17,7 +17,7 @@ echo "[bro-install] v$VER from $SRC"
 
 atomic() { cp "$1" "$2/.$(basename "$3").new" && mv "$2/.$(basename "$3").new" "$2/$3"; }
 mkdir -p "$BIN" "$SKILL" "$HOME/.claude"
-for b in bro-lib bro-append bro-harvest bro-expire bro-context bro-stop bro-migrate; do
+for b in bro-lib bro-append bro-harvest bro-expire bro-context bro-stop bro-migrate bro-upgrade; do
   if [ -f "$SRC/scripts/$b.sh" ]; then atomic "$SRC/scripts/$b.sh" "$BIN" "$b.sh"; chmod +x "$BIN/$b.sh"
   else echo "[bro-install] warning: scripts/$b.sh missing — skipped"; fi
 done
@@ -26,13 +26,18 @@ atomic "$SRC/VERSION" "$HOME/.claude/bro" VERSION
 
 # config: create or merge (existing values win)
 [ -f "$CONFIG" ] || echo '{}' > "$CONFIG"
-jq --arg v "$VER" '.version = $v | .root = (.root // "~/bro") | .staleMinutes = (.staleMinutes // 30)
+jq --arg v "$VER" '.version = $v | .root = (.root // "~/bro") | .staleMinutes = (.staleMinutes // 30) | .staleDays = (.staleDays // 3)
   | .contextChars = (.contextChars // 10000) | .workspaces = (.workspaces // {}) | del(.autoCreateAfterAnswers)' \
   "$CONFIG" > "$CONFIG.tmp" && mv "$CONFIG.tmp" "$CONFIG"
 
 ROOT=$(jq -r '.root' "$CONFIG"); ROOT="${ROOT/#\~/$HOME}"
 mkdir -p "$ROOT"
 [ -f "$ROOT/kinds.md" ] || cp "$SRC/scripts/kinds.md" "$ROOT/kinds.md"
+
+# store upgrade v5.0 -> v5.1 (before hooks, so the principle hook is registered in this run)
+if [ -f "$ROOT/.v5-migrated" ] && [ ! -f "$ROOT/.v5.1-upgraded" ] && [ -f "$BIN/bro-upgrade.sh" ]; then
+  bash "$BIN/bro-upgrade.sh" || true
+fi
 
 # hooks: purge every bro entry (v4 included), then add v5
 [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
